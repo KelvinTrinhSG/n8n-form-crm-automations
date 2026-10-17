@@ -1,0 +1,704 @@
+{
+  "name": "02 · Secure Webhook Gateway: signature, spam, rate limit, duplicates",
+  "nodes": [
+    {
+      "id": "overview-secure-webhook-gateway-signature-spam-rate-limit-duplicates",
+      "name": "Overview · Secure Webhook Gateway: signature, spam, rate limit, duplicates",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        -150
+      ],
+      "parameters": {
+        "content": "# 🛡️ 02 · Secure Webhook Gateway\n**Sits in front of the lead pipeline. Only signed, human, first-time submissions reach the CRM.**\n\n### Problem it solves\nA public webhook URL gets found. Bots post junk, the same form is submitted twice, the provider retries on timeouts. Each one becomes a fake or duplicate CRM contact that someone deletes by hand.\n\n### Checks, in order\n1. **Signature** (HMAC-SHA256, timing-safe, 5-min replay window) → 401\n2. **Rate limit** 5 / IP / 10 min → 429\n3. **Spam**: honeypot, filled in < 3 s, disposable domain, link count, spam phrases → 200 (silent)\n4. **Duplicate**: same submission id, or same email + message within 10 min → 200\n5. Otherwise → 202 and forwarded to **01**\n\n### Setup\n- Env: `WEBHOOK_SECRET`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **Google Sheets** → *Log Blocked Request*, *Log Forward Failure*\n\n### Why spam gets 200\nA 4xx tells the bot it was detected, and it adapts. A normal 200 does not.",
+        "color": 1,
+        "width": 460,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-1-1-receive",
+      "name": "Stage 1 · ① Receive",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -150
+      ],
+      "parameters": {
+        "content": "## ① Receive\nRaw body kept for the signature.",
+        "color": 4,
+        "width": 240,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-2-2-verify-filter",
+      "name": "Stage 2 · ② Verify & filter",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        -150
+      ],
+      "parameters": {
+        "content": "## ② Verify & filter\nSignature first, then spam and duplicate rules.",
+        "color": 2,
+        "width": 720,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-3-3-respond",
+      "name": "Stage 3 · ③ Respond",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        -150
+      ],
+      "parameters": {
+        "content": "## ③ Respond\nEach outcome gets the right HTTP status.",
+        "color": 5,
+        "width": 240,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-4-4-log-forward",
+      "name": "Stage 4 · ④ Log & forward",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        -150
+      ],
+      "parameters": {
+        "content": "## ④ Log & forward\nBlocked requests logged.\nGood ones forwarded to 01.",
+        "color": 6,
+        "width": 240,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-5-5-failure-path",
+      "name": "Stage 5 · ⑤ Failure path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        -150
+      ],
+      "parameters": {
+        "content": "## ⑤ Failure path\nPipeline down → keep the payload for replay.",
+        "color": 3,
+        "width": 240,
+        "height": 1180
+      }
+    },
+    {
+      "id": "secure-intake-webhook",
+      "name": "Secure Intake Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "secure-intake",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "5c2e9a41-7d3b-4e10-8f6a-1b2c3d4e5f02",
+      "notes": "POST /webhook/secure-intake · raw body",
+      "notesInFlow": true
+    },
+    {
+      "id": "verify-signature",
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Verifies the HMAC-SHA256 signature so only your form provider can call this webhook.\n// Supports two common formats:\n//   Typeform:  header \"typeform-signature: sha256=<base64 HMAC of raw body>\"\n//   Generic:   headers \"x-signature: sha256=<hex HMAC of `${timestamp}.${raw body}`>\" + \"x-timestamp: <unix seconds>\"\n//              (the timestamp blocks replay of an old, captured request)\n// n8n setup: NODE_FUNCTION_ALLOW_BUILTIN=crypto, N8N_BLOCK_ENV_ACCESS_IN_NODE=false, WEBHOOK_SECRET=<shared secret>.\nconst crypto = require('crypto');\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst secret = $env.WEBHOOK_SECRET;\nconst MAX_SKEW_SECONDS = 300;\n\nconst result = (verdict, reason) => [{\n  json: {\n    verdict,\n    reason,\n    headers: { 'x-forwarded-for': headers['x-forwarded-for'] || '', 'user-agent': headers['user-agent'] || '' },\n    body: item.json.body || {},\n  },\n}];\n\n// Fail closed: a missing secret must never mean \"accept everything\".\nif (!secret) return result('rejected', 'server misconfigured: WEBHOOK_SECRET not set');\n\n// The signature is computed over the exact bytes that were sent, so use the raw body (Webhook option \"Raw Body\").\n// Re-serialising the parsed JSON would change spacing/key order and break the comparison.\nlet raw;\ntry {\n  raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8');\n} catch (e) {\n  return result('rejected', 'raw body missing: enable \"Raw Body\" on the Webhook node');\n}\n\nconst safeEqual = (a, b) => {\n  const x = Buffer.from(String(a));\n  const y = Buffer.from(String(b));\n  return x.length === y.length && crypto.timingSafeEqual(x, y);\n};\n\nif (headers['typeform-signature']) {\n  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(raw).digest('base64');\n  return safeEqual(headers['typeform-signature'], expected) ? result('ok', 'typeform signature valid') : result('rejected', 'bad typeform signature');\n}\n\nif (headers['x-signature']) {\n  const ts = Number(headers['x-timestamp']);\n  if (!Number.isFinite(ts)) return result('rejected', 'missing x-timestamp');\n  const skew = Math.abs(Date.now() / 1000 - ts);\n  if (skew > MAX_SKEW_SECONDS) return result('rejected', `timestamp too old (${Math.round(skew)} s)`);\n  const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(`${ts}.${raw}`).digest('hex');\n  return safeEqual(headers['x-signature'], expected) ? result('ok', 'signature valid') : result('rejected', 'bad signature');\n}\n\nreturn result('rejected', 'no signature header');\n"
+      },
+      "notes": "HMAC-SHA256 · timing-safe · 5 min window",
+      "notesInFlow": true
+    },
+    {
+      "id": "spam-duplicate-filter",
+      "name": "Spam & Duplicate Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Decides what happens to a signed submission: accepted, spam, duplicate or rate_limited.\n// State (recent fingerprints, requests per IP) is kept in workflow static data.\n// Note: static data is only saved for production (active) executions, not for manual test runs.\nconst crypto = require('crypto');\nconst data = $input.first().json;\nif (data.verdict === 'rejected') return [{ json: { ...data, reasons: [data.reason] } }];\n\nconst body = data.body || {};\nconst state = $getWorkflowStaticData('global');\nstate.seen = state.seen || {};       // fingerprint → last seen (ms)\nstate.ips = state.ips || {};         // ip → [request times (ms)]\nconst now = Date.now();\n\nconst DUPLICATE_WINDOW_MS = 10 * 60 * 1000;\nconst RATE_WINDOW_MS = 10 * 60 * 1000;\nconst RATE_LIMIT = 5;                 // submissions per IP per window\nconst MIN_FILL_TIME_MS = 3000;        // humans need more than 3 s to fill a form\nconst HONEYPOT_FIELDS = ['website_url', '_hp', 'fax_number'];  // hidden with CSS, bots fill them\nconst DISPOSABLE = ['mailinator.com', 'guerrillamail.com', '10minutemail.com', 'tempmail.com', 'yopmail.com', 'trashmail.com', 'sharklasers.com', 'getnada.com'];\nconst SPAM_WORDS = /\\b(seo services?|backlinks?|casino|crypto ?invest|viagra|loan offer|guest post|rank (your|on) google)\\b/i;\n\n// Forget old entries so static data does not grow forever.\nfor (const [k, t] of Object.entries(state.seen)) if (now - t > 24 * 3600 * 1000) delete state.seen[k];\nfor (const [ip, times] of Object.entries(state.ips)) {\n  state.ips[ip] = times.filter((t) => now - t < RATE_WINDOW_MS);\n  if (!state.ips[ip].length) delete state.ips[ip];\n}\n\nconst emailAddr = String(body.email || body.Email || '').trim().toLowerCase();\nconst message = String(body.message || body.Message || '');\nconst ip = String(data.headers['x-forwarded-for'] || '').split(',')[0].trim() || 'unknown';\n\nconst out = (verdict, reasons) => {\n  const forward = { ...body };\n  for (const f of [...HONEYPOT_FIELDS, '_rendered_at']) delete forward[f];\n  return [{ json: { verdict, reasons, ip, email: emailAddr, received_at: new Date(now).toISOString(), message_excerpt: message.slice(0, 200), forward_body: forward } }];\n};\n\n// 1. Rate limit per IP (counts every signed request, spam or not).\nstate.ips[ip] = [...(state.ips[ip] || []), now];\nif (ip !== 'unknown' && state.ips[ip].length > RATE_LIMIT) return out('rate_limited', [`${state.ips[ip].length} requests from ${ip} in 10 min`]);\n\n// 2. Spam signals. A filled honeypot is decisive; otherwise two weak signals are needed.\nconst filledHoneypot = HONEYPOT_FIELDS.find((f) => String(body[f] || '').trim());\nif (filledHoneypot) return out('spam', [`honeypot field \"${filledHoneypot}\" filled`]);\n\nconst signals = [];\nconst renderedAt = Number(body._rendered_at);\nif (Number.isFinite(renderedAt) && now - renderedAt < MIN_FILL_TIME_MS) signals.push(`form filled in ${now - renderedAt} ms`);\nconst domain = emailAddr.split('@')[1] || '';\nif (DISPOSABLE.includes(domain)) signals.push(`disposable email domain ${domain}`);\nconst links = (message.match(/https?:\\/\\//g) || []).length;\nif (links > 3) signals.push(`${links} links in message`);\nif (SPAM_WORDS.test(message)) signals.push(`spam phrase: \"${message.match(SPAM_WORDS)[0]}\"`);\nif (/[Ѐ-ӿ]{20,}/.test(message) && !/[a-z]{3,}/i.test(message)) signals.push('message is only Cyrillic text');\nif (signals.length >= 2) return out('spam', signals);\n\n// 3. Duplicates: double clicks, browser resubmits and provider retries.\nconst submissionKey = body.submission_id || body.event_id || body.token;\nconst fingerprint = crypto.createHash('sha256')\n  .update(submissionKey ? `id:${submissionKey}` : `${emailAddr}|${message.toLowerCase().replace(/\\s+/g, ' ').trim()}`)\n  .digest('hex').slice(0, 16);\nconst lastSeen = state.seen[fingerprint];\nstate.seen[fingerprint] = now;\nif (lastSeen && (submissionKey || now - lastSeen < DUPLICATE_WINDOW_MS)) {\n  return out('duplicate', [`same submission seen ${Math.round((now - lastSeen) / 1000)} s ago`]);\n}\n\nreturn out('accepted', signals); // a single weak signal is passed on, not blocked\n"
+      },
+      "notes": "Honeypot · speed · rate limit · dedupe",
+      "notesInFlow": true
+    },
+    {
+      "id": "route-by-verdict",
+      "name": "Route by Verdict",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        830,
+        400
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-verdict-equals-rejected",
+                    "leftValue": "={{ $json.verdict }}",
+                    "rightValue": "rejected",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "rejected"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-verdict-equals-rate-limited",
+                    "leftValue": "={{ $json.verdict }}",
+                    "rightValue": "rate_limited",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "rate_limited"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-verdict-equals-spam",
+                    "leftValue": "={{ $json.verdict }}",
+                    "rightValue": "spam",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "spam"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-verdict-equals-duplicate",
+                    "leftValue": "={{ $json.verdict }}",
+                    "rightValue": "duplicate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "duplicate"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-verdict-equals-accepted",
+                    "leftValue": "={{ $json.verdict }}",
+                    "rightValue": "accepted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "accepted"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "5 outcomes",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1110,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"unauthorized\" }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "notes": "No details leaked",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-429",
+      "name": "Respond 429",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1110,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"too many requests\" }) }}",
+        "options": {
+          "responseCode": 429
+        }
+      },
+      "notes": "Slow down",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200-spam",
+      "name": "Respond 200 (spam)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1110,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Looks normal to the bot",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200-duplicate",
+      "name": "Respond 200 (duplicate)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1110,
+        600
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Idempotent",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-202",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1110,
+        800
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "notes": "Accepted",
+      "notesInFlow": true
+    },
+    {
+      "id": "log-blocked-request",
+      "name": "Log Blocked Request",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        300
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Spam Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "received_at": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).received_at }}",
+            "verdict": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).verdict }}",
+            "ip": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).ip }}",
+            "email": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).email }}",
+            "reasons_text": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).reasons_text }}",
+            "message_excerpt": "={{ ({ ...$json, reasons_text: $json.reasons.join('; ') }).message_excerpt }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "verdict",
+              "displayName": "verdict",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ip",
+              "displayName": "ip",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reasons_text",
+              "displayName": "reasons_text",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_excerpt",
+              "displayName": "message_excerpt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Spam Log\" · review weekly",
+      "notesInFlow": true
+    },
+    {
+      "id": "forward-to-lead-pipeline",
+      "name": "Forward to Lead Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1390,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/lead-form",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.forward_body) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueErrorOutput",
+      "notes": "→ project 01 webhook",
+      "notesInFlow": true
+    },
+    {
+      "id": "log-forward-failure",
+      "name": "Log Forward Failure",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1670,
+        400
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Gateway Failures",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "received_at": "={{ ({ ...$('Spam & Duplicate Filter').item.json, payload: JSON.stringify($('Spam & Duplicate Filter').item.json.forward_body), error: $json.error?.message || $json.error }).received_at }}",
+            "email": "={{ ({ ...$('Spam & Duplicate Filter').item.json, payload: JSON.stringify($('Spam & Duplicate Filter').item.json.forward_body), error: $json.error?.message || $json.error }).email }}",
+            "payload": "={{ ({ ...$('Spam & Duplicate Filter').item.json, payload: JSON.stringify($('Spam & Duplicate Filter').item.json.forward_body), error: $json.error?.message || $json.error }).payload }}",
+            "error": "={{ ({ ...$('Spam & Duplicate Filter').item.json, payload: JSON.stringify($('Spam & Duplicate Filter').item.json.forward_body), error: $json.error?.message || $json.error }).error }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error",
+              "displayName": "error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Gateway Failures\" · replay",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Secure Intake Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [
+          {
+            "node": "Spam & Duplicate Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Spam & Duplicate Filter": {
+      "main": [
+        [
+          {
+            "node": "Route by Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Verdict": {
+      "main": [
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 429",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 200 (spam)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 200 (duplicate)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 429": {
+      "main": [
+        [
+          {
+            "node": "Log Blocked Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200 (spam)": {
+      "main": [
+        [
+          {
+            "node": "Log Blocked Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202": {
+      "main": [
+        [
+          {
+            "node": "Forward to Lead Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Forward to Lead Pipeline": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Log Forward Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

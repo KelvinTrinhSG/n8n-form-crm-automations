@@ -1,0 +1,7 @@
+name,email,hubspot_owner_id,active,territories,segments,out_of_office_until
+Alice Nguyen,alice@example.com,51001,TRUE,"US,CA",smb,
+Ben Carter,ben@example.com,51002,TRUE,"US,CA",smb,
+Chloe Martin,chloe@example.com,51003,TRUE,"GB,DE,FR",smb,
+Daniel Kim,daniel@example.com,51004,TRUE,*,enterprise,
+Eva Rossi,eva@example.com,51005,TRUE,*,"smb,enterprise",
+Frank Lee,frank@example.com,51006,FALSE,"US",smb,

@@ -1,0 +1,324 @@
+{
+  "name": "10a · Error Handler: classify → log → deduplicated email alert",
+  "nodes": [
+    {
+      "id": "overview-error-handler-classify-log-deduplicated-email-alert",
+      "name": "Overview · Error Handler: classify → log → deduplicated email alert",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# 🚨 10a · Error Handler\n**One place that catches every failure, explains it, and emails ops only when it matters.**\n\n### Problem it solves\nWorkflows fail silently: an expired token, a quota, a renamed sheet column. Default n8n alerts are raw stack traces, or 200 identical emails during an outage.\n\n### What it does\n- Set as **Error Workflow** on 01–09 (`deploy.mjs` does it)\n- Classifies: **auth · quota · rate_limit · service_down · bad_data · code_bug**\n- Adds a **likely fix** in plain English\n- Logs **every** error to the Error Log tab\n- Emails at most **once per 30 min** per workflow + node + category, with a count of skipped duplicates\n\n### Note\nError workflows only fire for **production** (active) executions, not manual test runs.\n\n### Setup\n- 🔑 **Google Sheets**, **SMTP**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-catch",
+      "name": "Stage 1 · ① Catch",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Catch\nError Trigger.",
+        "color": 3,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-understand",
+      "name": "Stage 2 · ② Understand",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Understand\nWhat broke and what to do.",
+        "color": 2,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-record-alert",
+      "name": "Stage 3 · ③ Record & alert",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        560,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ Record & alert\nLog all, email the first.",
+        "color": 5,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "on-workflow-error",
+      "name": "On Workflow Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {},
+      "notes": "Fires for 01–09 in production",
+      "notesInFlow": true
+    },
+    {
+      "id": "classify-error",
+      "name": "Classify Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Turns a raw n8n error into something a person can act on: category, severity and a likely fix.\n// Alert storms are suppressed: the same workflow + node + category alerts at most once per 30 minutes;\n// the next alert says how many similar errors were skipped. Every error is still logged to the sheet.\nconst SUPPRESS_MINUTES = 30;\nconst d = $input.first().json;\nconst exec = d.execution || {};\nconst trig = d.trigger || {};\nconst err = exec.error || trig.error || {};\nconst wf = d.workflow || {};\nconst node = exec.lastNodeExecuted || (trig.error ? 'Trigger' : 'unknown');\nconst message = String(err.description || err.message || 'Unknown error');\nconst text = `${err.name || ''} ${err.message || ''} ${err.description || ''} ${err.httpCode || ''}`;\n\nconst RULES = [\n  { category: 'auth', severity: 'high', re: /\\b(401|403)\\b|unauthori[sz]ed|authori[sz]ation failed|forbidden|invalid[_ ]grant|invalid (api )?key|token (has )?expired|authentication|credentials? (not found|invalid)/i,\n    hint: 'A credential expired or lost a scope. Reconnect it in n8n → Credentials, then re-run the failed execution.' },\n  { category: 'quota', severity: 'high', re: /insufficient_quota|billing|quota exceeded|exceeded your current quota|payment required|\\b402\\b/i,\n    hint: 'The account is out of credit or quota (e.g. OpenAI). Top up or raise the limit.' },\n  { category: 'rate_limit', severity: 'medium', re: /\\b429\\b|too many requests|rate limit/i,\n    hint: 'Too many requests. Usually clears by itself; if it repeats, add batching/wait or lower the schedule frequency.' },\n  { category: 'service_down', severity: 'medium', re: /\\b(500|502|503|504)\\b|bad gateway|service unavailable|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|timeout/i,\n    hint: 'The other service was down or slow. Check its status page; retries or the retry queue will catch up.' },\n  { category: 'bad_data', severity: 'medium', re: /\\b(400|404|409|422)\\b|not valid|invalid input|required|does not exist|no such|not (be )?found/i,\n    hint: 'The data sent was rejected (wrong field, missing value, deleted record). Open the execution and check the input of the failing node.' },\n  { category: 'code_bug', severity: 'high', re: /ReferenceError|TypeError|SyntaxError|Cannot read propert|is not a function|is not defined/i,\n    hint: 'A bug in a Code node or an expression. Fix it in src/, rebuild and redeploy.' },\n];\nconst rule = RULES.find((r) => r.re.test(text)) || { category: 'unknown', severity: 'medium', hint: 'Open the execution to see the full error.' };\n\nconst state = $getWorkflowStaticData('global');\nstate.alerts = state.alerts || {};\nconst now = Date.now();\nfor (const [k, v] of Object.entries(state.alerts)) if (now - v.last > 24 * 3600 * 1000) delete state.alerts[k];\nconst signature = `${wf.id}|${node}|${rule.category}`;\nconst prev = state.alerts[signature];\nconst suppress = prev && now - prev.last < SUPPRESS_MINUTES * 60 * 1000;\nlet suppressedBefore = 0;\nif (suppress) {\n  prev.suppressed += 1;\n} else {\n  suppressedBefore = prev ? prev.suppressed : 0;\n  state.alerts[signature] = { last: now, suppressed: 0 };\n}\n\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst icon = { high: '🔴', medium: '🟠', low: '🟡' }[rule.severity];\nconst url = exec.url || '';\n\nreturn [{\n  json: {\n    occurred_at: new Date(now).toISOString(),\n    workflow: wf.name || wf.id || 'unknown workflow',\n    node,\n    category: rule.category,\n    severity: rule.severity,\n    message: message.slice(0, 500),\n    execution_url: url,\n    execution_mode: exec.mode || trig.mode || '',\n    alert_sent: !suppress,\n    email_subject: `${icon} [n8n] ${wf.name || 'Workflow'} failed at \"${node}\" (${rule.category})`,\n    email_html: `<div style=\"font-family:Arial;font-size:14px\">\n<p><b>Workflow:</b> ${esc(wf.name)}<br><b>Node:</b> ${esc(node)}<br><b>Category:</b> ${rule.category} · <b>Severity:</b> ${rule.severity}</p>\n<p style=\"background:#fef2f2;padding:10px;border-radius:6px\">${esc(message)}</p>\n<p><b>Likely fix:</b> ${esc(rule.hint)}</p>\n${url ? `<p><a href=\"${esc(url)}\">Open the failed execution</a></p>` : ''}\n${suppressedBefore ? `<p style=\"color:#666\">${suppressedBefore} similar error(s) in the last ${SUPPRESS_MINUTES} min were not emailed (see Error Log).</p>` : ''}\n</div>`,\n  },\n}];\n"
+      },
+      "notes": "Category · severity · fix · suppression",
+      "notesInFlow": true
+    },
+    {
+      "id": "log-to-error-log",
+      "name": "Log to Error Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        630,
+        300
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Error Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "occurred_at": "={{ $json.occurred_at }}",
+            "workflow": "={{ $json.workflow }}",
+            "node": "={{ $json.node }}",
+            "category": "={{ $json.category }}",
+            "severity": "={{ $json.severity }}",
+            "message": "={{ $json.message }}",
+            "execution_url": "={{ $json.execution_url }}",
+            "execution_mode": "={{ $json.execution_mode }}",
+            "alert_sent": "={{ $json.alert_sent }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "occurred_at",
+              "displayName": "occurred_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_url",
+              "displayName": "execution_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_mode",
+              "displayName": "execution_mode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "alert_sent",
+              "displayName": "alert_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Error Log\" · every error",
+      "notesInFlow": true
+    },
+    {
+      "id": "send-alert",
+      "name": "Send Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        630,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-alert-sent-true",
+              "leftValue": "={{ $json.alert_sent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Max 1 per 30 min per signature",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-ops",
+      "name": "Email Ops",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        870,
+        400
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "ops@example.com",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Actionable alert",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "On Workflow Error": {
+      "main": [
+        [
+          {
+            "node": "Classify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Error": {
+      "main": [
+        [
+          {
+            "node": "Log to Error Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert?": {
+      "main": [
+        [
+          {
+            "node": "Email Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

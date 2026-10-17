@@ -1,0 +1,32 @@
+{
+  "created_at": "2026-10-19T15:02:11.000000Z",
+  "created_by": "https://api.calendly.com/users/AAAA",
+  "event": "invitee.created",
+  "payload": {
+    "uri": "https://api.calendly.com/scheduled_events/EV1/invitees/INV1",
+    "email": "Marco.Rossi@vela-logistics.com",
+    "name": "Marco Rossi",
+    "first_name": null,
+    "last_name": null,
+    "status": "active",
+    "timezone": "Europe/Rome",
+    "rescheduled": false,
+    "old_invitee": null,
+    "new_invitee": null,
+    "text_reminder_number": "+39 02 1234 5678",
+    "questions_and_answers": [
+      { "question": "Company name", "answer": "Vela Logistics", "position": 0 },
+      { "question": "What would you like to cover?", "answer": "Syncing our web forms into HubSpot and Sheets", "position": 1 }
+    ],
+    "tracking": { "utm_source": "linkedin", "utm_campaign": "q4-demo" },
+    "cancellation": null,
+    "scheduled_event": {
+      "uri": "https://api.calendly.com/scheduled_events/EV1",
+      "name": "30-min Demo",
+      "start_time": "2026-10-21T14:00:00.000000Z",
+      "end_time": "2026-10-21T14:30:00.000000Z",
+      "location": { "type": "google_conference", "join_url": "https://meet.google.com/abc-defg-hij" },
+      "event_memberships": [{ "user_email": "alice@example.com", "user_name": "Alice Nguyen" }]
+    }
+  }
+}

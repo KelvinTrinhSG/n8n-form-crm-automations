@@ -1,0 +1,410 @@
+{
+  "name": "05 · Speed-to-Lead SLA: business-hours clock → HubSpot check → reminders & escalation",
+  "nodes": [
+    {
+      "id": "overview-speed-to-lead-sla-business-hours-clock-hubspot-check-reminders-escalation",
+      "name": "Overview · Speed-to-Lead SLA: business-hours clock → HubSpot check → reminders & escalation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# ⏱️ 05 · Speed-to-Lead SLA\n**No lead waits more than an hour of business time without someone noticing.**\n\n### Problem it solves\nLeads contacted within the first hour convert far better, but nobody watches the clock. A manager finds out on Friday that Tuesday's demo request was never called.\n\n### Rules\n| Business time without contact | Action |\n|---|---|\n| 60 min | Reminder to the **owner** |\n| 240 min | Escalation to the **sales manager** |\n| No owner | Straight to the manager |\n\n### Why check HubSpot first\nThe sheet does not know about calls. The workflow reads `hs_last_sales_activity_timestamp`, `notes_last_contacted` and `hs_lead_status`. If the rep already acted, the lead is marked **met** and nobody is bothered.\n\n### Business hours\nMon–Fri 9:00–18:00 ET, holidays excluded, DST-safe.\n\n### No duplicate alerts\n`sla_level` in the Leads tab records the last alert sent. **01** resets it when the person submits again.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token** (`crm.objects.contacts.read`), **SMTP**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-schedule",
+      "name": "Stage 1 · ① Schedule",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Schedule\nBusiness hours only.",
+        "color": 4,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-find-overdue-leads",
+      "name": "Stage 2 · ② Find overdue leads",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Find overdue leads\nSheet → business-minute clock.",
+        "color": 2,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-confirm-in-crm",
+      "name": "Stage 3 · ③ Confirm in CRM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ Confirm in CRM\nOne batch call for up to 100 leads.",
+        "color": 6,
+        "width": 720,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-4-4-record-alert",
+      "name": "Stage 4 · ④ Record & alert",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        150
+      ],
+      "parameters": {
+        "content": "## ④ Record & alert\nUpdate the sheet, email grouped alerts.",
+        "color": 5,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "every-15-min-business-hours",
+      "name": "Every 15 Min, Business Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 9-18 * * 1-5"
+            }
+          ]
+        }
+      },
+      "notes": "Mon–Fri 9:00–18:45 ET",
+      "notesInFlow": true
+    },
+    {
+      "id": "read-leads",
+      "name": "Read Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "Tab \"Leads\" (written by 01)",
+      "notesInFlow": true
+    },
+    {
+      "id": "find-sla-candidates",
+      "name": "Find SLA Candidates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Finds leads whose response clock has passed an SLA level, counting business minutes only.\n//   level \"rep\"     → 60 business minutes without contact → remind the owner\n//   level \"manager\" → 240 business minutes without contact → escalate to the sales manager\n// Business hours: Mon–Fri 09:00–18:00 America/New_York, minus holidays. A lead sent Friday 17:30\n// is 30 minutes old at Monday 09:00, not 63 hours.\nconst TZ = 'America/New_York';\nconst OPEN_MIN = 9 * 60;\nconst CLOSE_MIN = 18 * 60;\nconst WORKDAYS = [1, 2, 3, 4, 5];\nconst HOLIDAYS = ['2026-11-26', '2026-12-25', '2027-01-01', '2027-01-18', '2027-05-31', '2027-07-05'];\nconst LEVELS = [{ level: 'rep', after: 60 }, { level: 'manager', after: 240 }];\nconst LOOKBACK_DAYS = 5;\nconst RANK = { '': 0, rep: 1, manager: 2, met: 3 };\n\nconst fmt = new Intl.DateTimeFormat('en-US', {\n  timeZone: TZ, hour12: false, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',\n});\nconst local = (ms) => {\n  const p = Object.fromEntries(fmt.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));\n  return {\n    day: `${p.year}-${p.month}-${p.day}`,\n    dow: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday),\n    min: (Number(p.hour) % 24) * 60 + Number(p.minute),\n  };\n};\n// Walks the interval in 5-minute steps. Uses real instants, so DST changes are handled by Intl.\nconst businessMinutes = (fromMs, toMs) => {\n  const STEP = 5;\n  let total = 0;\n  for (let t = fromMs; t < toMs; t += STEP * 60000) {\n    const l = local(t);\n    if (WORKDAYS.includes(l.dow) && !HOLIDAYS.includes(l.day) && l.min >= OPEN_MIN && l.min < CLOSE_MIN) {\n      total += Math.min(STEP, (toMs - t) / 60000);\n    }\n  }\n  return Math.round(total);\n};\n\nconst now = Date.now();\nconst candidates = [];\nfor (const { json: row } of $input.all()) {\n  const submitted = Date.parse(row.last_submitted_at);\n  if (!row.email || !row.hubspot_contact_id || !Number.isFinite(submitted)) continue;\n  if (now - submitted > LOOKBACK_DAYS * 86400000) continue;\n  const current = String(row.sla_level || '').toLowerCase();\n  if (current === 'met' || current === 'manager') continue;\n\n  const elapsed = businessMinutes(submitted, now);\n  const due = [...LEVELS].reverse().find((l) => elapsed >= l.after);\n  if (!due || RANK[due.level] <= RANK[current]) continue;\n  candidates.push({\n    email: row.email,\n    name: [row.first_name, row.last_name].filter(Boolean).join(' '),\n    company: row.company || '',\n    hubspot_contact_id: String(row.hubspot_contact_id),\n    submitted_at: row.last_submitted_at,\n    business_minutes: elapsed,\n    due_level: due.level,\n  });\n}\n\nif (!candidates.length) return [];\nconst batch = candidates.slice(0, 100); // HubSpot batch read limit\nreturn [{\n  json: {\n    candidates: batch,\n    request_body: {\n      properties: ['hubspot_owner_id', 'hs_lead_status', 'notes_last_contacted', 'hs_last_sales_activity_timestamp', 'lifecyclestage'],\n      inputs: batch.map((c) => ({ id: c.hubspot_contact_id })),\n    },\n  },\n}];\n"
+      },
+      "notes": "Business minutes · 60 / 240 thresholds",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-batch-read-contacts",
+      "name": "HubSpot · Batch Read Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        870,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/batch/read",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "stopWorkflow",
+      "notes": "Owner · status · last activity",
+      "notesInFlow": true
+    },
+    {
+      "id": "read-sales-reps",
+      "name": "Read Sales Reps",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1110,
+        400
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sales Reps",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "notes": "owner id → rep email",
+      "notesInFlow": true
+    },
+    {
+      "id": "decide-escalations",
+      "name": "Decide Escalations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Checks HubSpot before alerting anyone: the sheet can be out of date, the CRM is the truth.\n// A lead counts as contacted if, after it was submitted, the rep logged a call/email/meeting\n// (hs_last_sales_activity_timestamp, notes_last_contacted) or moved the lead status past NEW/OPEN.\n// Output: one item per lead with the new sla_level, plus who should be told.\nconst MANAGER_EMAIL = 'sales@example.com';\nconst candidates = $('Find SLA Candidates').first().json.candidates;\nconst crm = Object.fromEntries(($('HubSpot · Batch Read Contacts').first().json.results || []).map((r) => [String(r.id), r.properties || {}]));\nconst reps = Object.fromEntries($input.all().map((i) => i.json).filter((r) => r.hubspot_owner_id).map((r) => [String(r.hubspot_owner_id), r]));\nconst UNTOUCHED = ['', 'NEW', 'OPEN'];\n\nconst now = new Date().toISOString();\nreturn candidates.map((c) => {\n  const p = crm[c.hubspot_contact_id];\n  const submitted = Date.parse(c.submitted_at);\n  const after = (v) => v && Date.parse(v) > submitted;\n  const contacted = p && (after(p.hs_last_sales_activity_timestamp) || after(p.notes_last_contacted) || !UNTOUCHED.includes(String(p.hs_lead_status || '').toUpperCase()));\n\n  if (contacted) return { json: { ...c, sla_level: 'met', sla_alerted_at: now, notify: false } };\n\n  const owner = p && reps[String(p.hubspot_owner_id || '')];\n  // No owner, or owner not in the reps sheet: nobody will get a \"rep\" reminder, so go to the manager.\n  const level = !owner ? 'manager' : c.due_level;\n  const recipient = level === 'rep' ? owner.email : MANAGER_EMAIL;\n  return {\n    json: {\n      ...c,\n      sla_level: level,\n      sla_alerted_at: now,\n      notify: true,\n      recipient,\n      owner_name: owner ? owner.name : '(no owner)',\n      missing_from_crm: !p,\n    },\n  };\n});\n"
+      },
+      "notes": "CRM says contacted? → met",
+      "notesInFlow": true
+    },
+    {
+      "id": "update-sla-status",
+      "name": "Update SLA Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1630,
+        300
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email": "={{ $json.email }}",
+            "sla_level": "={{ $json.sla_level }}",
+            "sla_alerted_at": "={{ $json.sla_alerted_at }}"
+          },
+          "matchingColumns": [
+            "email"
+          ],
+          "schema": [
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_level",
+              "displayName": "sla_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_alerted_at",
+              "displayName": "sla_alerted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Never alert twice for one level",
+      "notesInFlow": true
+    },
+    {
+      "id": "group-alerts-by-recipient",
+      "name": "Group Alerts by Recipient",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1630,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// One email per recipient listing all of their overdue leads, instead of one email per lead.\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst fmtAge = (m) => (m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`);\n\nconst groups = {};\nfor (const { json: l } of $input.all()) {\n  if (!l.notify) continue;\n  (groups[l.recipient] ||= []).push(l);\n}\n\nreturn Object.entries(groups).map(([to, leads]) => {\n  const isManager = leads.some((l) => l.sla_level === 'manager');\n  leads.sort((a, b) => b.business_minutes - a.business_minutes);\n  const rows = leads.map((l) => `<tr><td>${esc(l.name || l.email)}</td><td>${esc(l.company)}</td><td>${esc(l.email)}</td>`\n    + `<td>${esc(l.owner_name)}</td><td style=\"text-align:right\">${fmtAge(l.business_minutes)}</td></tr>`).join('');\n  const intro = isManager\n    ? 'These leads have waited more than 4 business hours without any logged contact.'\n    : 'These leads are yours and have waited more than 1 business hour. Please call or email them, then log it in HubSpot.';\n  return {\n    json: {\n      email_to: to,\n      email_subject: `${isManager ? '🚨 SLA breach' : '⏰ Reminder'}: ${leads.length} lead${leads.length > 1 ? 's' : ''} waiting`,\n      email_html: `<p>${intro}</p><table cellpadding=\"6\" style=\"border-collapse:collapse;font-family:Arial;font-size:13px\" border=\"1\">`\n        + '<tr style=\"background:#f3f4f6\"><th>Lead</th><th>Company</th><th>Email</th><th>Owner</th><th>Waiting (business time)</th></tr>'\n        + `${rows}</table><p style=\"color:#666\">Business hours: Mon–Fri 9:00–18:00 ET.</p>`,\n    },\n  };\n});\n"
+      },
+      "notes": "One email per person",
+      "notesInFlow": true
+    },
+    {
+      "id": "send-sla-alert",
+      "name": "Send SLA Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1870,
+        400
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "={{ $json.email_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Rep reminder or manager escalation",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Every 15 Min, Business Hours": {
+      "main": [
+        [
+          {
+            "node": "Read Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Leads": {
+      "main": [
+        [
+          {
+            "node": "Find SLA Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find SLA Candidates": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Batch Read Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Batch Read Contacts": {
+      "main": [
+        [
+          {
+            "node": "Read Sales Reps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sales Reps": {
+      "main": [
+        [
+          {
+            "node": "Decide Escalations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide Escalations": {
+      "main": [
+        [
+          {
+            "node": "Update SLA Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Group Alerts by Recipient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Alerts by Recipient": {
+      "main": [
+        [
+          {
+            "node": "Send SLA Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

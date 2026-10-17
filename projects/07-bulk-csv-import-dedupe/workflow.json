@@ -1,0 +1,472 @@
+{
+  "name": "07 · Bulk CSV Import: clean → dedupe → HubSpot batch upsert → report",
+  "nodes": [
+    {
+      "id": "overview-bulk-csv-import-clean-dedupe-hubspot-batch-upsert-report",
+      "name": "Overview · Bulk CSV Import: clean → dedupe → HubSpot batch upsert → report",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# 📤 07 · Bulk CSV Import\n**After an event, upload the lead list once. The workflow cleans it, imports it without duplicates and emails a report.**\n\n### Problem it solves\nA 400-row CSV from a trade show: mixed headers, blank lines, typos, the same person twice, people who are already customers. Cleaning in Excel and importing by hand takes hours and still creates duplicates.\n\n### What it does\n1. Internal form: upload CSV + source name\n2. Map any header naming to HubSpot fields\n3. **Reject** rows without a valid email (reason kept)\n4. **Merge** duplicates inside the file\n5. HubSpot **batch upsert** by email, 100 per call, 1 call/s\n6. Report: created / updated / rejected → email + **Import Rejects** tab\n\n### Why dedupe before HubSpot\nOne duplicated email inside a batch makes HubSpot reject **the whole batch**.\n\n### Never lose rows\nA failed batch (after 3 retries) is listed email by email in the report. Partial errors (207) are reported too.\n\n### Setup\n- 🔑 **HubSpot App Token**, **Google Sheets**, **SMTP**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-upload",
+      "name": "Stage 1 · ① Upload",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Upload\nn8n form with a file field.",
+        "color": 4,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-clean",
+      "name": "Stage 2 · ② Clean",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Clean\nParse, map, validate, dedupe, batch.",
+        "color": 2,
+        "width": 720,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-import",
+      "name": "Stage 3 · ③ Import",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ Import\nUpsert by email, rate-limited.",
+        "color": 6,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-4-4-report",
+      "name": "Stage 4 · ④ Report",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        150
+      ],
+      "parameters": {
+        "content": "## ④ Report\nEmail the uploader, log rejects.",
+        "color": 5,
+        "width": 720,
+        "height": 580
+      }
+    },
+    {
+      "id": "upload-lead-list",
+      "name": "Upload Lead List",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "formTitle": "Import a lead list into HubSpot",
+        "formDescription": "Upload a CSV (event, webinar, LinkedIn export). You will get an email with the result.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Lead List (CSV)",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": ".csv",
+              "multipleFiles": false
+            },
+            {
+              "fieldLabel": "List Source",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "e.g. SaaS Expo Austin 2026"
+            },
+            {
+              "fieldLabel": "Your Email",
+              "fieldType": "email",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "path": "import-leads",
+          "appendAttribution": false
+        }
+      },
+      "webhookId": "2b9c7e15-4f8a-4d36-b1e2-7a6c5d4e3f07",
+      "notes": "Internal form · /form/import-leads",
+      "notesInFlow": true
+    },
+    {
+      "id": "parse-csv",
+      "name": "Parse CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "={{ Object.keys($binary)[0] }}",
+        "options": {}
+      },
+      "notes": "Header row → one item per row",
+      "notesInFlow": true
+    },
+    {
+      "id": "clean-validate-dedupe",
+      "name": "Clean, Validate & Dedupe",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Cleans a lead list exported from an event app, LinkedIn or a spreadsheet, then prepares HubSpot batches.\n//   - Header names vary (\"E-mail\", \"Email Address\", \"Company Name\"...) → mapped through aliases\n//   - Rows without a valid email are rejected with the reason (they come back in the report)\n//   - The same person twice in the file → merged into one row (blanks filled from the other copy)\n//     HubSpot's batch upsert fails the whole batch if one email appears twice in it, so this is required.\n//   - Output: one item per batch of 100 (HubSpot's batch limit)\nconst BATCH_SIZE = 100;\nconst form = $('Upload Lead List').first().json;\nconst source = String(form['List Source'] || 'CSV import').trim();\n\nconst keyOf = (k) => String(k).toLowerCase().replace(/^﻿/, '').replace(/[^a-z0-9]/g, '');\nconst ALIASES = {\n  email: ['email', 'emailaddress', 'e-mail', 'workemail', 'businessemail', 'mail'],\n  firstname: ['firstname', 'first', 'givenname', 'fname'],\n  lastname: ['lastname', 'last', 'surname', 'familyname', 'lname'],\n  fullname: ['name', 'fullname', 'contactname'],\n  company: ['company', 'companyname', 'organization', 'organisation', 'account'],\n  jobtitle: ['jobtitle', 'title', 'position', 'role'],\n  phone: ['phone', 'phonenumber', 'mobile', 'mobilephone', 'tel', 'telephone'],\n  city: ['city', 'town'],\n  country: ['country', 'countryregion'],\n};\n\nconst rows = $input.all().map((i) => i.json);\nconst valid = new Map(); // email → properties\nconst rejects = [];\nlet duplicatesMerged = 0;\n\nrows.forEach((raw, index) => {\n  const rowNumber = index + 2; // +1 for the header, +1 because sheets start at 1\n  const flat = Object.fromEntries(Object.entries(raw).map(([k, v]) => [keyOf(k), String(v ?? '').replace(/\\s+/g, ' ').trim()]));\n  if (!Object.values(flat).some(Boolean)) return; // blank line at the end of the file\n  const get = (f) => ALIASES[f].map((a) => flat[keyOf(a)]).find(Boolean) || '';\n\n  const emailAddr = get('email').toLowerCase().replace(/^mailto:/, '').replace(/[<>]/g, '');\n  if (!emailAddr) { rejects.push({ row: rowNumber, email: '', reason: 'missing email', data: JSON.stringify(raw) }); return; }\n  if (!/^[^\\s@]+@[^\\s@]+\\.[a-z]{2,}$/i.test(emailAddr)) { rejects.push({ row: rowNumber, email: emailAddr, reason: 'invalid email', data: JSON.stringify(raw) }); return; }\n\n  let first = get('firstname');\n  let last = get('lastname');\n  if (!first && !last && get('fullname')) {\n    const parts = get('fullname').split(' ');\n    first = parts.shift();\n    last = parts.join(' ');\n  }\n\n  const props = { email: emailAddr, firstname: first, lastname: last, company: get('company'), jobtitle: get('jobtitle'), phone: get('phone'), city: get('city'), country: get('country') };\n  for (const k of Object.keys(props)) if (!props[k]) delete props[k]; // never send blanks over existing CRM data\n\n  if (valid.has(emailAddr)) {\n    duplicatesMerged += 1;\n    const kept = valid.get(emailAddr);\n    for (const [k, v] of Object.entries(props)) if (!kept[k]) kept[k] = v;\n  } else {\n    valid.set(emailAddr, props);\n  }\n});\n\nconst contacts = [...valid.values()];\nconst stats = { source, uploaded_by: form['Your Email'] || '', total_rows: rows.length, valid: contacts.length, rejected: rejects.length, duplicates_merged: duplicatesMerged };\n\nif (!contacts.length) return [{ json: { has_batches: false, stats, rejects } }];\n\nconst batches = [];\nfor (let i = 0; i < contacts.length; i += BATCH_SIZE) {\n  const chunk = contacts.slice(i, i + BATCH_SIZE);\n  batches.push({\n    json: {\n      has_batches: true,\n      batch: batches.length + 1,\n      emails: chunk.map((c) => c.email),\n      request_body: { inputs: chunk.map((p) => ({ idProperty: 'email', id: p.email, properties: p })) },\n      // Report data travels on the first item only.\n      ...(batches.length === 0 ? { stats, rejects } : {}),\n    },\n  });\n}\nreturn batches;\n"
+      },
+      "notes": "Aliases · reject bad · merge duplicates · 100/batch",
+      "notesInFlow": true
+    },
+    {
+      "id": "any-valid-rows",
+      "name": "Any Valid Rows?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        830,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-has-batches-true",
+              "leftValue": "={{ $json.has_batches }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Empty file still gets a report",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-batch-upsert",
+      "name": "HubSpot · Batch Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1110,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 30000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 1000
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "1 batch/s · 3 retries · failures reported",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-import-report",
+      "name": "Build Import Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1390,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Summarises the import for the person who uploaded the file:\n// created vs updated (HubSpot's \"new\" flag), rejected rows with reasons, failed batches.\n// Runs after the batch upsert (one item per batch, same order) or directly when no row was valid.\nconst prepared = $('Clean, Validate & Dedupe').all().map((i) => i.json);\nconst { stats, rejects } = prepared[0];\nconst responses = prepared[0].has_batches ? $input.all().map((i) => i.json) : [];\n\nlet created = 0;\nlet updated = 0;\nconst failed = [...rejects];\nresponses.forEach((res, i) => {\n  const batch = prepared[i];\n  if (res.error) {\n    // The whole batch failed (after 3 retries): report every email in it so nothing is silently lost.\n    const message = typeof res.error === 'object' ? res.error.message : String(res.error);\n    batch.emails.forEach((e) => failed.push({ row: '', email: e, reason: `batch ${batch.batch} failed: ${message}`.slice(0, 300), data: '' }));\n    return;\n  }\n  for (const r of res.results || []) (r.new ? created++ : updated++);\n  // 207 Multi-Status: some inputs failed inside an otherwise successful batch.\n  for (const e of res.errors || []) failed.push({ row: '', email: (e.context?.ids || []).join(', '), reason: e.message, data: '' });\n});\n\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst sample = failed.slice(0, 20).map((f) => `<tr><td>${esc(f.row)}</td><td>${esc(f.email)}</td><td>${esc(f.reason)}</td></tr>`).join('');\n\nreturn [{\n  json: {\n    email_to: stats.uploaded_by,\n    email_subject: `Import finished: ${created} created, ${updated} updated, ${failed.length} need attention (${stats.source})`,\n    email_html: `<div style=\"font-family:Arial;font-size:14px\">\n<h3 style=\"margin:0\">Lead import · ${esc(stats.source)}</h3>\n<table cellpadding=\"4\">\n<tr><td>Rows in file</td><td><b>${stats.total_rows}</b></td></tr>\n<tr><td>New contacts created</td><td><b>${created}</b></td></tr>\n<tr><td>Existing contacts updated</td><td><b>${updated}</b></td></tr>\n<tr><td>Duplicates merged in the file</td><td><b>${stats.duplicates_merged}</b></td></tr>\n<tr><td>Rejected / failed</td><td><b>${failed.length}</b></td></tr>\n</table>\n${failed.length ? `<p>Full list in the <b>Import Rejects</b> tab. First ${Math.min(20, failed.length)}:</p><table border=\"1\" cellpadding=\"4\" style=\"border-collapse:collapse\"><tr><th>Row</th><th>Email</th><th>Reason</th></tr>${sample}</table>` : '<p>✅ Every row was imported.</p>'}\n</div>`,\n    rejects: failed.map((f) => ({ ...f, source: stats.source, imported_at: new Date().toISOString() })),\n  },\n}];\n"
+      },
+      "notes": "Created · updated · rejected",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-report-to-uploader",
+      "name": "Email Report to Uploader",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1630,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "={{ $json.email_to }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "To the person who uploaded",
+      "notesInFlow": true
+    },
+    {
+      "id": "split-rejected-rows",
+      "name": "Split Rejected Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1630,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// One item per rejected or failed row, for the \"Import Rejects\" tab.\nreturn $input.first().json.rejects.map((r) => ({ json: r }));\n"
+      },
+      "notes": "One item per bad row",
+      "notesInFlow": true
+    },
+    {
+      "id": "log-rejected-rows",
+      "name": "Log Rejected Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1870,
+        400
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Import Rejects",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "imported_at": "={{ $json.imported_at }}",
+            "source": "={{ $json.source }}",
+            "row": "={{ $json.row }}",
+            "email": "={{ $json.email }}",
+            "reason": "={{ $json.reason }}",
+            "data": "={{ $json.data }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "imported_at",
+              "displayName": "imported_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row",
+              "displayName": "row",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Import Rejects\" · fix & re-upload",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Upload Lead List": {
+      "main": [
+        [
+          {
+            "node": "Parse CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CSV": {
+      "main": [
+        [
+          {
+            "node": "Clean, Validate & Dedupe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean, Validate & Dedupe": {
+      "main": [
+        [
+          {
+            "node": "Any Valid Rows?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Valid Rows?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Batch Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Import Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Batch Upsert": {
+      "main": [
+        [
+          {
+            "node": "Build Import Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Import Report": {
+      "main": [
+        [
+          {
+            "node": "Email Report to Uploader",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Rejected Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Rejected Rows": {
+      "main": [
+        [
+          {
+            "node": "Log Rejected Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

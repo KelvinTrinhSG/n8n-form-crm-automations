@@ -1,0 +1,1016 @@
+{
+  "name": "01 · Form → HubSpot (create/update) → Google Sheets → Email",
+  "nodes": [
+    {
+      "id": "overview-form-hubspot-create-update-google-sheets-email",
+      "name": "Overview · Form → HubSpot (create/update) → Google Sheets → Email",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# 📥 01 · Form → CRM → Sheets → Email\n**Every website form submission becomes a clean HubSpot contact, a row in the Leads sheet and an email to sales, in seconds.**\n\n### Replaces\nCopying each submission into HubSpot, checking for an existing contact, pasting it into the tracking sheet and forwarding it to sales. **≈ 6 min per lead.**\n\n### Flow\n1. Website form POSTs to the webhook\n2. Data cleaned + validated (bad data → 400)\n3. Visitor gets **202** immediately\n4. HubSpot: search by email → **update** or **create**\n5. Leads sheet: **append or update** by email\n6. HTML email to sales\n\n### Data rules\n- Never overwrite CRM data with blanks\n- Name/company: fill only if empty\n- Lifecycle stage only moves forward\n\n### Reliability\n- HubSpot: 3 retries, then the lead goes to **Failed Syncs** → retried by **03**\n- Any other failure → **10 · Error Handler**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-capture",
+      "name": "Stage 1 · ① Capture",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Capture\nWebhook from any form builder.",
+        "color": 4,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-clean-validate",
+      "name": "Stage 2 · ② Clean & validate",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Clean & validate\nMap aliases, fix typos.\nReject bad data with 400.",
+        "color": 2,
+        "width": 720,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-crm-create-update",
+      "name": "Stage 3 · ③ CRM create / update",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1040,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ CRM create / update\nSearch → decide → write.\nRed outputs = failed after retries.",
+        "color": 6,
+        "width": 960,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-4-4-sheet-notify",
+      "name": "Stage 4 · ④ Sheet & notify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2040,
+        150
+      ],
+      "parameters": {
+        "content": "## ④ Sheet & notify\nOne row per person.\nEmail the sales team.",
+        "color": 5,
+        "width": 960,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-5-5-failure-path",
+      "name": "Stage 5 · ⑤ Failure path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3040,
+        150
+      ],
+      "parameters": {
+        "content": "## ⑤ Failure path\nLead kept in the retry queue.",
+        "color": 3,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "lead-form-webhook",
+      "name": "Lead Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-form",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "3a7d2c10-1b4e-4f6a-9c21-0e5f8a7b6c01",
+      "notes": "POST /webhook/lead-form",
+      "notesInFlow": true
+    },
+    {
+      "id": "normalize-validate",
+      "name": "Normalize & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Turns a raw website form submission into one clean, validated lead.\n// Works with any form builder: field names are matched through aliases (Email, email, your-email, ...),\n// so switching from Webflow to Typeform or Elementor only means adding an alias here.\nconst req = $input.first().json;\nconst body = req.body && typeof req.body === 'object' ? req.body : {};\nconst query = req.query || {};\n\nconst keyOf = (k) => String(k).toLowerCase().trim().replace(/[\\s-]+/g, '_');\nconst ALIASES = {\n  email: ['email', 'e-mail', 'email address', 'work email', 'your-email'],\n  first_name: ['first name', 'firstname', 'fname', 'given name'],\n  last_name: ['last name', 'lastname', 'lname', 'surname', 'family name'],\n  full_name: ['name', 'full name', 'fullname', 'your-name', 'contact name'],\n  phone: ['phone', 'phone number', 'mobile', 'tel', 'your-phone'],\n  company: ['company', 'company name', 'organization', 'organisation', 'business'],\n  job_title: ['job title', 'jobtitle', 'title', 'role', 'position'],\n  website: ['website', 'company website', 'url', 'domain'],\n  message: ['message', 'comments', 'inquiry', 'how can we help', 'your-message', 'notes'],\n  consent: ['consent', 'gdpr', 'marketing consent', 'opt in', 'accept terms'],\n};\n\nconst flat = {};\nfor (const [k, v] of Object.entries(body)) flat[keyOf(k)] = v;\nconst pick = (fieldName) => {\n  for (const alias of ALIASES[fieldName]) {\n    const v = flat[keyOf(alias)];\n    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).replace(/\\s+/g, ' ').trim();\n  }\n  return '';\n};\n\nconst errors = [];\nconst warnings = [];\n\n// \"JOHN SMITH\" or \"john smith\" → \"John Smith\". Mixed case (\"McDonald\") is left alone.\nconst fixCase = (s) => (s && (s === s.toUpperCase() || s === s.toLowerCase())\n  ? s.toLowerCase().replace(/(^|[\\s'-])\\p{L}/gu, (m) => m.toUpperCase())\n  : s);\n\n// ---------- email ----------\nconst TYPO_DOMAINS = { 'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.con': 'gmail.com', 'gmail.co': 'gmail.com', 'hotmial.com': 'hotmail.com', 'yahooo.com': 'yahoo.com', 'outlook.con': 'outlook.com' };\nlet email = pick('email').toLowerCase().replace(/^mailto:/, '');\nconst [localPart, domainPart = ''] = email.split('@');\nif (TYPO_DOMAINS[domainPart]) {\n  warnings.push(`email domain corrected: ${domainPart} → ${TYPO_DOMAINS[domainPart]}`);\n  email = `${localPart}@${TYPO_DOMAINS[domainPart]}`;\n}\nif (!email) errors.push('email is required');\nelse if (!/^[^\\s@]+@[^\\s@]+\\.[a-z]{2,}$/i.test(email)) errors.push(`email is not valid: ${email}`);\nconst emailDomain = email.split('@')[1] || '';\n\n// ---------- name ----------\nlet firstName = pick('first_name');\nlet lastName = pick('last_name');\nif (!firstName && !lastName) {\n  const parts = pick('full_name').split(' ').filter(Boolean);\n  firstName = parts.shift() || '';\n  lastName = parts.join(' ');\n}\nfirstName = fixCase(firstName);\nlastName = fixCase(lastName);\nif (!firstName) warnings.push('no name given');\n\n// ---------- phone: digits only, E.164 style when the country is obvious ----------\nconst DEFAULT_COUNTRY_CODE = '1'; // US/Canada. Change for your market.\nconst rawPhone = pick('phone');\nlet phone = '';\nif (rawPhone) {\n  const digits = rawPhone.replace(/[^\\d]/g, '');\n  if (rawPhone.trim().startsWith('+')) phone = `+${digits}`;\n  else if (rawPhone.trim().startsWith('00')) phone = `+${digits.slice(2)}`;\n  else if (digits.length === 10) phone = `+${DEFAULT_COUNTRY_CODE}${digits}`;\n  else if (digits.length === 11 && digits.startsWith(DEFAULT_COUNTRY_CODE)) phone = `+${digits}`;\n  else phone = digits;\n  const len = phone.replace('+', '').length;\n  if (len < 8 || len > 15) {\n    warnings.push(`phone looks wrong, kept as typed: ${rawPhone}`);\n    phone = rawPhone;\n  }\n}\n\n// ---------- company website: from the form, or guessed from a business email domain ----------\nconst FREE_MAIL = ['gmail.com', 'googlemail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'live.com', 'icloud.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com'];\nlet website = pick('website').toLowerCase();\nif (website) {\n  website = website.replace(/^(https?:\\/\\/)?(www\\.)?/, '').replace(/\\/.*$/, '');\n  website = `https://${website}`;\n} else if (emailDomain && !FREE_MAIL.includes(emailDomain)) {\n  website = `https://${emailDomain}`;\n}\n\n// ---------- message ----------\nconst MAX_MESSAGE = 5000;\nlet message = pick('message');\nif (message.length > MAX_MESSAGE) {\n  warnings.push(`message cut to ${MAX_MESSAGE} characters`);\n  message = message.slice(0, MAX_MESSAGE);\n}\n\nconst consentRaw = pick('consent').toLowerCase();\nconst consent = ['true', 'yes', 'on', '1', 'checked', 'y'].includes(consentRaw);\n\nconst fromBodyOrQuery = (k) => String(flat[k] ?? query[k] ?? '').trim();\nconst receivedAt = new Date().toISOString();\n\nreturn [{\n  json: {\n    valid: errors.length === 0,\n    errors,\n    warnings,\n    received_at: receivedAt,\n    lead: {\n      submission_id: fromBodyOrQuery('submission_id') || `S-${Date.now().toString(36).toUpperCase()}`,\n      email,\n      first_name: firstName,\n      last_name: lastName,\n      phone,\n      company: pick('company'),\n      job_title: pick('job_title'),\n      website,\n      message,\n      consent,\n      form_name: fromBodyOrQuery('form_name') || fromBodyOrQuery('form') || 'website',\n      page_url: fromBodyOrQuery('page_url'),\n      utm_source: fromBodyOrQuery('utm_source'),\n      utm_medium: fromBodyOrQuery('utm_medium'),\n      utm_campaign: fromBodyOrQuery('utm_campaign'),\n    },\n  },\n}];\n"
+      },
+      "notes": "Aliases · trim · email/phone/name fixes",
+      "notesInFlow": true
+    },
+    {
+      "id": "is-valid",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-valid-true",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Email present and well-formed",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-202-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        830,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, id: $json.lead.submission_id }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "notes": "Visitor never waits for the CRM",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-400-invalid",
+      "name": "Respond 400 Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        830,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, errors: $json.errors }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "notes": "Form shows the errors",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-find-contact",
+      "name": "HubSpot · Find Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1110,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $json.lead.email }] }],\n  properties: ['email', 'firstname', 'lastname', 'company', 'website', 'phone', 'jobtitle', 'lifecyclestage', 'hubspot_owner_id'],\n  limit: 1\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "Search by email",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-crm-payload",
+      "name": "Build CRM Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1350,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Decides \"create\" or \"update\" and builds the HubSpot properties to send.\n// Data rules (agreed with sales, written down in the README):\n//   1. Never overwrite CRM data with a blank value.\n//   2. Name and company are only filled when empty in the CRM (sales may have corrected them).\n//   3. Phone, job title and message come from the latest submission, so the form wins.\n//   4. Lifecycle stage only moves forward: a \"customer\" is never pushed back to \"lead\".\nconst { lead } = $('Normalize & Validate').first().json;\nconst search = $input.first().json;\nconst existing = (search.results || [])[0];\nconst current = existing ? existing.properties || {} : {};\n\nconst fromForm = {\n  email: lead.email,\n  firstname: lead.first_name,\n  lastname: lead.last_name,\n  company: lead.company,\n  website: lead.website,\n  phone: lead.phone,\n  jobtitle: lead.job_title,\n  message: lead.message,\n};\nconst FILL_IF_EMPTY = ['firstname', 'lastname', 'company', 'website'];\nconst FORM_WINS = ['phone', 'jobtitle', 'message'];\n\nconst properties = {};\nconst changed = [];\nfor (const [key, value] of Object.entries(fromForm)) {\n  if (!value) continue; // rule 1\n  if (!existing) { properties[key] = value; continue; }\n  const old = current[key] || '';\n  if (old === value) continue;\n  if (FILL_IF_EMPTY.includes(key) && old) continue; // rule 2\n  if (FILL_IF_EMPTY.includes(key) || FORM_WINS.includes(key)) {\n    properties[key] = value;\n    changed.push(old ? `${key}: \"${old}\" → \"${value}\"` : `${key}: set to \"${value}\"`);\n  }\n}\n\n// Rule 4. HubSpot's default stages, in order.\nconst STAGES = ['subscriber', 'lead', 'marketingqualifiedlead', 'salesqualifiedlead', 'opportunity', 'customer', 'evangelist'];\nconst currentStage = STAGES.indexOf(current.lifecyclestage || '');\nif (!existing) {\n  properties.lifecyclestage = 'lead';\n  properties.hs_lead_status = 'NEW';\n} else if (currentStage < STAGES.indexOf('lead')) {\n  properties.lifecyclestage = 'lead';\n  changed.push(`lifecyclestage: \"${current.lifecyclestage || '(empty)'}\" → \"lead\"`);\n}\n\nreturn [{\n  json: {\n    action: existing ? 'update' : 'create',\n    contact_id: existing ? existing.id : '',\n    current_lifecycle: current.lifecyclestage || '',\n    current_owner_id: current.hubspot_owner_id || '',\n    properties,\n    changed_fields: changed,\n  },\n}];\n"
+      },
+      "notes": "No blank overwrites · stage only forward",
+      "notesInFlow": true
+    },
+    {
+      "id": "contact-exists",
+      "name": "Contact Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1590,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-action-update-true",
+              "leftValue": "={{ $json.action === 'update' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Update or create",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-update-contact",
+      "name": "HubSpot · Update Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1830,
+        300
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: $json.properties }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "PATCH changed fields only",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-create-contact",
+      "name": "HubSpot · Create Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1830,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inputs: [{ idProperty: 'email', id: $json.properties.email, properties: $json.properties }] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "Upsert by email · race-safe",
+      "notesInFlow": true
+    },
+    {
+      "id": "collect-crm-result",
+      "name": "Collect CRM Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2110,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Merges the form data and the HubSpot response into one row for the \"Leads\" sheet.\n// Runs after either \"HubSpot · Update Contact\" (returns {id}) or \"HubSpot · Create Contact\" (batch upsert, returns {results:[{id, new}]}).\nconst response = $input.first().json;\nconst payload = $('Build CRM Payload').first().json;\nconst { lead, warnings, received_at } = $('Normalize & Validate').first().json;\n\nconst upserted = (response.results || [])[0];\nconst contactId = response.id || (upserted && upserted.id) || payload.contact_id;\n// The upsert endpoint is race-safe: if the same person submitted twice within seconds,\n// the second call updates the contact created by the first one instead of duplicating it.\nconst action = payload.action === 'create' && upserted && upserted.new === false ? 'update' : payload.action;\n\nreturn [{\n  json: {\n    email: lead.email,\n    first_name: lead.first_name,\n    last_name: lead.last_name,\n    phone: lead.phone,\n    company: lead.company,\n    job_title: lead.job_title,\n    website: lead.website,\n    message: lead.message,\n    consent: lead.consent ? 'yes' : 'no',\n    form_name: lead.form_name,\n    page_url: lead.page_url,\n    utm_source: lead.utm_source,\n    utm_medium: lead.utm_medium,\n    utm_campaign: lead.utm_campaign,\n    hubspot_contact_id: contactId,\n    crm_action: action,\n    changed_fields: payload.changed_fields.join('; '),\n    warnings: warnings.join('; '),\n    last_submitted_at: received_at,\n    submission_id: lead.submission_id,\n    // Reset on every submission so the SLA monitor (project 05) starts a new clock.\n    sla_level: '',\n    sla_alerted_at: '',\n  },\n}];\n"
+      },
+      "notes": "One row per person",
+      "notesInFlow": true
+    },
+    {
+      "id": "upsert-leads-sheet",
+      "name": "Upsert Leads Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2350,
+        400
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "email": "={{ $json.email }}",
+            "first_name": "={{ $json.first_name }}",
+            "last_name": "={{ $json.last_name }}",
+            "phone": "={{ $json.phone }}",
+            "company": "={{ $json.company }}",
+            "job_title": "={{ $json.job_title }}",
+            "website": "={{ $json.website }}",
+            "message": "={{ $json.message }}",
+            "consent": "={{ $json.consent }}",
+            "form_name": "={{ $json.form_name }}",
+            "page_url": "={{ $json.page_url }}",
+            "utm_source": "={{ $json.utm_source }}",
+            "utm_medium": "={{ $json.utm_medium }}",
+            "utm_campaign": "={{ $json.utm_campaign }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}",
+            "crm_action": "={{ $json.crm_action }}",
+            "changed_fields": "={{ $json.changed_fields }}",
+            "warnings": "={{ $json.warnings }}",
+            "last_submitted_at": "={{ $json.last_submitted_at }}",
+            "submission_id": "={{ $json.submission_id }}",
+            "sla_level": "={{ $json.sla_level }}",
+            "sla_alerted_at": "={{ $json.sla_alerted_at }}"
+          },
+          "matchingColumns": [
+            "email"
+          ],
+          "schema": [
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "first_name",
+              "displayName": "first_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_name",
+              "displayName": "last_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_title",
+              "displayName": "job_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message",
+              "displayName": "message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "form_name",
+              "displayName": "form_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "page_url",
+              "displayName": "page_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "crm_action",
+              "displayName": "crm_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "changed_fields",
+              "displayName": "changed_fields",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "warnings",
+              "displayName": "warnings",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_submitted_at",
+              "displayName": "last_submitted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_id",
+              "displayName": "submission_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_level",
+              "displayName": "sla_level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sla_alerted_at",
+              "displayName": "sla_alerted_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Leads\" · key = email",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-notification-email",
+      "name": "Build Notification Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Builds the internal notification email. Every value typed by the visitor is HTML-escaped,\n// so a message containing <script> or a fake link cannot inject markup into the sales inbox.\nconst row = $input.first().json;\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\n\nconst name = [row.first_name, row.last_name].filter(Boolean).join(' ') || row.email;\nconst isNew = row.crm_action === 'create';\nconst badge = isNew ? '🆕 New contact' : '🔁 Returning contact';\n\nconst line = (label, value) => (value ? `<tr><td style=\"padding:4px 12px 4px 0;color:#666\">${esc(label)}</td><td style=\"padding:4px 0\">${esc(value)}</td></tr>` : '');\nconst campaign = [row.utm_source, row.utm_medium, row.utm_campaign].filter(Boolean).join(' / ');\n\nconst html = `\n<div style=\"font-family:Arial,sans-serif;font-size:14px;color:#222;max-width:600px\">\n  <h2 style=\"margin:0 0 4px\">${esc(name)}${row.company ? ` · ${esc(row.company)}` : ''}</h2>\n  <p style=\"margin:0 0 16px;color:#555\">${badge} · form: ${esc(row.form_name)}</p>\n  <table style=\"border-collapse:collapse\">\n    ${line('Email', row.email)}\n    ${line('Phone', row.phone)}\n    ${line('Job title', row.job_title)}\n    ${line('Website', row.website)}\n    ${line('Campaign', campaign)}\n    ${line('Page', row.page_url)}\n    ${line('HubSpot ID', row.hubspot_contact_id)}\n  </table>\n  <h3 style=\"margin:16px 0 4px\">Message</h3>\n  <p style=\"white-space:pre-wrap;background:#f6f6f6;padding:12px;border-radius:6px;margin:0\">${esc(row.message) || '<i>(no message)</i>'}</p>\n  ${row.changed_fields ? `<p style=\"color:#555\"><b>CRM fields updated:</b> ${esc(row.changed_fields)}</p>` : ''}\n  ${row.warnings ? `<p style=\"color:#b45309\"><b>⚠️ Check:</b> ${esc(row.warnings)}</p>` : ''}\n</div>`;\n\nreturn [{\n  json: {\n    email_subject: `${isNew ? 'New lead' : 'Returning lead'}: ${name}${row.company ? ` (${row.company})` : ''}`,\n    email_html: html,\n  },\n}];\n"
+      },
+      "notes": "HTML · all input escaped",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-sales-team",
+      "name": "Email Sales Team",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2830,
+        400
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "sales@example.com",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "SMTP → sales inbox",
+      "notesInFlow": true
+    },
+    {
+      "id": "prepare-failed-sync",
+      "name": "Prepare Failed Sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3110,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Runs when a HubSpot call still fails after 3 retries (token expired, HubSpot outage, rate limit).\n// The visitor already got \"202 Accepted\", so the lead must not be lost: it goes into the\n// \"Failed Syncs\" sheet, and the retry worker (project 03) pushes it to HubSpot later.\nconst { lead } = $('Normalize & Validate').first().json;\nconst failure = $input.first().json;\nconst err = typeof failure.error === 'object' && failure.error ? failure.error : { message: failure.error || failure.message };\n\n// Properties may not exist yet if the first HubSpot call (search) failed. Fall back to a plain mapping.\nlet properties;\ntry {\n  properties = $('Build CRM Payload').first().json.properties;\n} catch (e) {\n  properties = Object.fromEntries(Object.entries({\n    email: lead.email, firstname: lead.first_name, lastname: lead.last_name, company: lead.company,\n    website: lead.website, phone: lead.phone, jobtitle: lead.job_title, message: lead.message,\n  }).filter(([, v]) => v));\n}\n\nconst now = new Date();\nconst code = String(err.httpCode || err.status || (String(err.message || '').match(/\\b([45]\\d\\d)\\b/) || [])[1] || '');\n\nreturn [{\n  json: {\n    queue_id: `Q-${now.getTime().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`,\n    created_at: now.toISOString(),\n    source_workflow: '01 · Form → CRM',\n    stage: $prevNode.name,\n    email: lead.email,\n    payload: JSON.stringify(properties),\n    attempts: 0,\n    status: 'pending',\n    next_retry_at: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),\n    last_error_code: code,\n    last_error: String(err.message || 'unknown error').slice(0, 500),\n    resolved_at: '',\n    hubspot_contact_id: '',\n  },\n}];\n"
+      },
+      "notes": "Keep the lead, record the error",
+      "notesInFlow": true
+    },
+    {
+      "id": "add-to-retry-queue",
+      "name": "Add to Retry Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3350,
+        400
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Failed Syncs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "queue_id": "={{ $json.queue_id }}",
+            "created_at": "={{ $json.created_at }}",
+            "source_workflow": "={{ $json.source_workflow }}",
+            "stage": "={{ $json.stage }}",
+            "email": "={{ $json.email }}",
+            "payload": "={{ $json.payload }}",
+            "attempts": "={{ $json.attempts }}",
+            "status": "={{ $json.status }}",
+            "next_retry_at": "={{ $json.next_retry_at }}",
+            "last_error_code": "={{ $json.last_error_code }}",
+            "last_error": "={{ $json.last_error }}",
+            "resolved_at": "={{ $json.resolved_at }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "queue_id",
+              "displayName": "queue_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_workflow",
+              "displayName": "source_workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "stage",
+              "displayName": "stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "attempts",
+              "displayName": "attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_retry_at",
+              "displayName": "next_retry_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error_code",
+              "displayName": "last_error_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Failed Syncs\" → project 03",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Lead Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Validate": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 400 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202 Accepted": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Find Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Find Contact": {
+      "main": [
+        [
+          {
+            "node": "Build CRM Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Failed Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CRM Payload": {
+      "main": [
+        [
+          {
+            "node": "Contact Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Exists?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Update Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HubSpot · Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Update Contact": {
+      "main": [
+        [
+          {
+            "node": "Collect CRM Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Failed Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Create Contact": {
+      "main": [
+        [
+          {
+            "node": "Collect CRM Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Failed Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect CRM Result": {
+      "main": [
+        [
+          {
+            "node": "Upsert Leads Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Leads Sheet": {
+      "main": [
+        [
+          {
+            "node": "Build Notification Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notification Email": {
+      "main": [
+        [
+          {
+            "node": "Email Sales Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Failed Sync": {
+      "main": [
+        [
+          {
+            "node": "Add to Retry Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

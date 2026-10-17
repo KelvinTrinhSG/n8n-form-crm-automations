@@ -1,0 +1,527 @@
+{
+  "name": "04 · Lead Routing: territory + segment + round robin → HubSpot owner",
+  "nodes": [
+    {
+      "id": "overview-lead-routing-territory-segment-round-robin-hubspot-owner",
+      "name": "Overview · Lead Routing: territory + segment + round robin → HubSpot owner",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# 🧭 04 · Lead Routing\n**Every new lead gets the right owner in HubSpot within seconds, and the rep gets an email.**\n\n### Problem it solves\nA manager assigns leads by hand from a shared inbox. Leads wait until someone is free, some reps get more than others, and nobody notices when a rep is on holiday.\n\n### Rules (in order)\n1. Already has an owner → **keep it**\n2. **Segment**: 500+ employees → enterprise reps\n3. **Territory**: country-specific reps before `*` reps\n4. Skip **inactive** and **out-of-office** reps\n5. **Round robin** inside the pool\n\n### Rules live in a sheet\nThe manager edits tab **Sales Reps** (active, territories, segments, out_of_office_until). No workflow change needed.\n\n### Called by\nProject 01 (after the contact is created) or any system: POST `{hubspot_contact_id, email, name, company, country, employees, current_owner_id}`.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token** (scope `crm.objects.contacts.write`), **SMTP**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-receive",
+      "name": "Stage 1 · ① Receive",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Receive\nLead details from 01 or any caller.",
+        "color": 4,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-decide-owner",
+      "name": "Stage 2 · ② Decide owner",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Decide owner\nRules from the Sales Reps sheet.",
+        "color": 2,
+        "width": 960,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-assign-notify",
+      "name": "Stage 3 · ③ Assign & notify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ Assign & notify\nOwner in HubSpot, audit row, rep email.",
+        "color": 5,
+        "width": 960,
+        "height": 580
+      }
+    },
+    {
+      "id": "route-lead-webhook",
+      "name": "Route Lead Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "route-lead",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "8d4f1e22-6a3c-4b9d-a7e5-2c1b0f9e8d04",
+      "notes": "POST /webhook/route-lead",
+      "notesInFlow": true
+    },
+    {
+      "id": "read-sales-reps",
+      "name": "Read Sales Reps",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sales Reps",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "Tab \"Sales Reps\" · edited by the manager",
+      "notesInFlow": true
+    },
+    {
+      "id": "choose-owner",
+      "name": "Choose Owner",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Picks the sales rep who owns a new lead.\n// Rules, in order:\n//   1. The contact already has an owner in HubSpot → keep it (never steal an account).\n//   2. Segment: 500+ employees = enterprise, else smb. Only reps with that segment qualify.\n//   3. Territory: reps covering the lead's country beat reps marked \"*\" (everywhere).\n//   4. Skip inactive reps and reps out of office today.\n//   5. Among the remaining reps, rotate (round robin). The pointer is kept per pool in static data.\nconst lead = $('Route Lead Webhook').first().json.body || {};\nconst reps = $input.all().map((i) => i.json).filter((r) => r.email);\nconst state = $getWorkflowStaticData('global');\nstate.pointers = state.pointers || {};\n\nconst ENTERPRISE_MIN_EMPLOYEES = 500;\nconst COUNTRY = {\n  'united states': 'US', usa: 'US', 'u.s.': 'US', america: 'US', us: 'US',\n  canada: 'CA', ca: 'CA', 'united kingdom': 'GB', uk: 'GB', england: 'GB', gb: 'GB',\n  germany: 'DE', deutschland: 'DE', de: 'DE', france: 'FR', fr: 'FR', australia: 'AU', au: 'AU',\n  vietnam: 'VN', 'viet nam': 'VN', vn: 'VN', singapore: 'SG', sg: 'SG',\n};\nconst country = COUNTRY[String(lead.country || '').trim().toLowerCase()] || String(lead.country || '').trim().toUpperCase().slice(0, 2);\nconst employees = Number(String(lead.employees || '').replace(/[^\\d]/g, '')) || 0;\nconst segment = employees >= ENTERPRISE_MIN_EMPLOYEES ? 'enterprise' : 'smb';\n\nconst yes = (v) => ['true', 'yes', '1', 'y', 'x'].includes(String(v).trim().toLowerCase());\nconst list = (v) => String(v || '').split(/[,;]/).map((s) => s.trim().toUpperCase()).filter(Boolean);\nconst today = new Date().toISOString().slice(0, 10);\nconst outOfOffice = (r) => r.out_of_office_until && String(r.out_of_office_until).slice(0, 10) >= today;\n\nconst base = { contact_id: lead.hubspot_contact_id || '', email: lead.email || '', name: lead.name || '', company: lead.company || '', country, employees, segment };\n\n// Rule 1\nif (lead.current_owner_id) {\n  const owner = reps.find((r) => String(r.hubspot_owner_id) === String(lead.current_owner_id));\n  return [{ json: { ...base, assigned: true, changed: false, rule: 'existing owner kept', owner: owner || { hubspot_owner_id: lead.current_owner_id, name: '(unknown rep)', email: '' } } }];\n}\n\nconst available = reps\n  .filter((r) => yes(r.active) && !outOfOffice(r))\n  .filter((r) => list(r.segments).includes(segment.toUpperCase()));\nconst local = available.filter((r) => list(r.territories).includes(country));\nconst global = available.filter((r) => list(r.territories).includes('*'));\nconst pool = (local.length ? local : global).sort((a, b) => String(a.email).localeCompare(String(b.email)));\nconst rule = local.length ? `${segment} · territory ${country}` : `${segment} · global pool`;\n\nif (!pool.length) {\n  return [{ json: { ...base, assigned: false, changed: false, rule: `no available rep for ${segment} / ${country || 'unknown country'}`, owner: null } }];\n}\n\n// Rule 5. Pool key includes the members so adding/removing a rep restarts the rotation cleanly.\nconst poolKey = `${segment}:${local.length ? country : '*'}:${pool.map((r) => r.email).join(',')}`;\nconst index = (state.pointers[poolKey] || 0) % pool.length;\nstate.pointers[poolKey] = index + 1;\nconst owner = pool[index];\n\nreturn [{\n  json: {\n    ...base,\n    assigned: true,\n    changed: true,\n    rule: `${rule} · round robin ${index + 1}/${pool.length}`,\n    owner: { name: owner.name, email: owner.email, hubspot_owner_id: String(owner.hubspot_owner_id) },\n    assigned_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "notes": "Keep owner → segment → territory → round robin",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-emails",
+      "name": "Build Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        830,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Builds the email: to the assigned rep, or to the sales manager when nobody could be assigned.\nconst r = $('Choose Owner').first().json;\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst who = r.name || r.email;\nconst details = `<p><b>${esc(who)}</b>${r.company ? ` · ${esc(r.company)}` : ''}<br>${esc(r.email)}<br>`\n  + `Country: ${esc(r.country || '?')} · Employees: ${esc(r.employees || '?')} · Segment: ${esc(r.segment)}<br>`\n  + `HubSpot contact: ${esc(r.contact_id)}</p>`;\n\nif (r.assigned) {\n  return [{\n    json: {\n      ...r,\n      email_to: r.owner.email,\n      email_subject: `New lead assigned to you: ${who}${r.company ? ` (${r.company})` : ''}`,\n      email_html: `<p>Hi ${esc(String(r.owner.name).split(' ')[0])}, this lead is yours. Please reply within 1 business hour.</p>${details}<p style=\"color:#666\">Rule: ${esc(r.rule)}</p>`,\n    },\n  }];\n}\nreturn [{\n  json: {\n    ...r,\n    email_to: '',\n    email_subject: `⚠️ Unassigned lead: ${who}`,\n    email_html: `<p>No rep matched this lead, so it needs a manual owner in HubSpot.</p>${details}<p style=\"color:#b45309\">Reason: ${esc(r.rule)}</p>`,\n  },\n}];\n"
+      },
+      "notes": "Rep or manager message",
+      "notesInFlow": true
+    },
+    {
+      "id": "owner-assigned",
+      "name": "Owner Assigned?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1070,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-assigned-true",
+              "leftValue": "={{ $json.assigned }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Someone available?",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-set-contact-owner",
+      "name": "HubSpot · Set Contact Owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1350,
+        300
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: { hubspot_owner_id: $json.owner.hubspot_owner_id } }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "stopWorkflow",
+      "notes": "hubspot_owner_id",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-sales-manager",
+      "name": "Email Sales Manager",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1350,
+        500
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "sales@example.com",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Needs a manual owner",
+      "notesInFlow": true
+    },
+    {
+      "id": "log-assignment",
+      "name": "Log Assignment",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1590,
+        300
+      ],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Assignments",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "assigned_at": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).assigned_at }}",
+            "contact_id": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).contact_id }}",
+            "email": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).email }}",
+            "company": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).company }}",
+            "country": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).country }}",
+            "segment": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).segment }}",
+            "owner_name": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).owner_name }}",
+            "owner_email": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).owner_email }}",
+            "rule": "={{ ({ ...$('Build Emails').item.json, assigned_at: $('Build Emails').item.json.assigned_at || $now.toISO(), owner_name: $('Build Emails').item.json.owner.name, owner_email: $('Build Emails').item.json.owner.email }).rule }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "assigned_at",
+              "displayName": "assigned_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_id",
+              "displayName": "contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "country",
+              "displayName": "country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "segment",
+              "displayName": "segment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner_name",
+              "displayName": "owner_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner_email",
+              "displayName": "owner_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rule",
+              "displayName": "rule",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Assignments\" · audit trail",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-unassigned",
+      "name": "Respond Unassigned",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1590,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, owner: null, rule: $json.rule }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Not an error",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-assigned-rep",
+      "name": "Email Assigned Rep",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1830,
+        400
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "={{ $('Build Emails').item.json.email_to || 'sales@example.com' }}",
+        "subject": "={{ $('Build Emails').item.json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $('Build Emails').item.json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Direct to the rep",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-owner",
+      "name": "Respond Owner",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2070,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, owner: $('Choose Owner').first().json.owner, rule: $('Choose Owner').first().json.rule }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Caller gets the owner",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Route Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Sales Reps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sales Reps": {
+      "main": [
+        [
+          {
+            "node": "Choose Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Choose Owner": {
+      "main": [
+        [
+          {
+            "node": "Build Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Emails": {
+      "main": [
+        [
+          {
+            "node": "Owner Assigned?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Owner Assigned?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Set Contact Owner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Sales Manager",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Set Contact Owner": {
+      "main": [
+        [
+          {
+            "node": "Log Assignment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Assignment": {
+      "main": [
+        [
+          {
+            "node": "Email Assigned Rep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Assigned Rep": {
+      "main": [
+        [
+          {
+            "node": "Respond Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Sales Manager": {
+      "main": [
+        [
+          {
+            "node": "Respond Unassigned",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

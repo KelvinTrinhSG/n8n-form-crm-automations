@@ -1,0 +1,561 @@
+{
+  "name": "06 · Incremental Sync: HubSpot contacts → Google Sheets (cursor + pagination)",
+  "nodes": [
+    {
+      "id": "overview-incremental-sync-hubspot-contacts-google-sheets-cursor-pagination",
+      "name": "Overview · Incremental Sync: HubSpot contacts → Google Sheets (cursor + pagination)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        250
+      ],
+      "parameters": {
+        "content": "# 🔄 06 · HubSpot → Sheets Incremental Sync\n**A Google Sheet that mirrors HubSpot contacts, refreshed every hour, without re-downloading everything.**\n\n### Problem it solves\nManagers and finance want CRM data in a spreadsheet for pivots and Looker Studio. Someone exports a CSV every Monday, so the sheet is always stale.\n\n### How it works\n1. Read the **cursor** (last `lastmodifieddate` synced)\n2. HubSpot **search**: changed since cursor, oldest first, **paginated**\n3. Flatten pages, **dedupe**, translate internal values to labels\n4. **Upsert** rows by `hubspot_id`\n5. Save the new cursor, **only after** the write succeeded\n\n### Edge cases handled\n- Contact edited while paging → appears twice → newest kept\n- Same-millisecond edits → `GTE` + upsert, never skipped\n- Search cap (10,000) → backlog caught up over several runs\n- First run / reset → last 30 days\n\n### Why one-way\nTwo-way sync needs conflict rules (who wins if both changed?). HubSpot stays the source of truth; the sheet is read-only reporting.\n\n### Setup\n- 🔑 **HubSpot App Token** (`crm.objects.contacts.read`), **Google Sheets**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-schedule",
+      "name": "Stage 1 · ① Schedule",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        250
+      ],
+      "parameters": {
+        "content": "## ① Schedule\nHourly.",
+        "color": 4,
+        "width": 240,
+        "height": 380
+      }
+    },
+    {
+      "id": "stage-2-2-where-did-we-stop",
+      "name": "Stage 2 · ② Where did we stop?",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        250
+      ],
+      "parameters": {
+        "content": "## ② Where did we stop?\nCursor from the Sync State tab.",
+        "color": 2,
+        "width": 480,
+        "height": 380
+      }
+    },
+    {
+      "id": "stage-3-3-fetch-changes",
+      "name": "Stage 3 · ③ Fetch changes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        250
+      ],
+      "parameters": {
+        "content": "## ③ Fetch changes\nAll pages, rate-limited.",
+        "color": 6,
+        "width": 480,
+        "height": 380
+      }
+    },
+    {
+      "id": "stage-4-4-write-advance",
+      "name": "Stage 4 · ④ Write & advance",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        250
+      ],
+      "parameters": {
+        "content": "## ④ Write & advance\nUpsert rows, then move the cursor.",
+        "color": 5,
+        "width": 720,
+        "height": 380
+      }
+    },
+    {
+      "id": "every-hour",
+      "name": "Every Hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 * * * *"
+            }
+          ]
+        }
+      },
+      "notes": "Minute 5 of every hour",
+      "notesInFlow": true
+    },
+    {
+      "id": "read-sync-state",
+      "name": "Read Sync State",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sync State",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "Tab \"Sync State\" · key/value",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-search-request",
+      "name": "Build Search Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Builds the HubSpot search request for contacts changed since the last successful sync.\n// The cursor lives in the \"Sync State\" tab (key/value), so it is visible and can be reset by hand:\n// clear the value to re-sync the last INITIAL_DAYS days.\nconst INITIAL_DAYS = 30;\nconst KEY = 'contacts_last_modified';\n\nconst state = $input.all().map((i) => i.json).find((r) => r.key === KEY);\nconst saved = state && Date.parse(state.value);\nconst since = Number.isFinite(saved) ? saved : Date.now() - INITIAL_DAYS * 86400000;\n\nreturn [{\n  json: {\n    since_iso: new Date(since).toISOString(),\n    request_body: {\n      // GTE, not GT: two contacts can share the cursor millisecond. Re-reading one row is harmless\n      // because the sheet write is an upsert by hubspot_id.\n      filterGroups: [{ filters: [{ propertyName: 'lastmodifieddate', operator: 'GTE', value: String(since) }] }],\n      sorts: [{ propertyName: 'lastmodifieddate', direction: 'ASCENDING' }],\n      properties: ['email', 'firstname', 'lastname', 'company', 'jobtitle', 'phone', 'lifecyclestage', 'hs_lead_status',\n        'hubspot_owner_id', 'createdate', 'lastmodifieddate', 'hs_last_sales_activity_timestamp', 'num_associated_deals'],\n      limit: 100,\n    },\n  },\n}];\n"
+      },
+      "notes": "lastmodifieddate ≥ cursor",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-search-changed-contacts",
+      "name": "HubSpot · Search Changed Contacts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        870,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 30000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "body",
+                    "name": "after",
+                    "value": "={{ $response.body.paging?.next?.after }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.paging?.next?.after }}",
+              "limitPagesFetched": true,
+              "maxRequests": 50,
+              "requestInterval": 250
+            }
+          }
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "stopWorkflow",
+      "notes": "Paginated · 100/page · max 50 pages",
+      "notesInFlow": true
+    },
+    {
+      "id": "map-rows",
+      "name": "Map Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1110,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Flattens every page returned by the paginated search into one sheet row per contact.\n// Internal HubSpot values are turned into the labels people see in HubSpot.\nconst STAGE = {\n  subscriber: 'Subscriber', lead: 'Lead', marketingqualifiedlead: 'MQL', salesqualifiedlead: 'SQL',\n  opportunity: 'Opportunity', customer: 'Customer', evangelist: 'Evangelist', other: 'Other',\n};\nconst STATUS = {\n  NEW: 'New', OPEN: 'Open', IN_PROGRESS: 'In progress', OPEN_DEAL: 'Open deal', UNQUALIFIED: 'Unqualified',\n  ATTEMPTED_TO_CONTACT: 'Attempted to contact', CONNECTED: 'Connected', BAD_TIMING: 'Bad timing',\n};\nconst SEARCH_CAP = 10000; // HubSpot search returns at most 10,000 results per query\n\nconst pages = $input.all().map((i) => i.json);\nconst total = Number(pages[0]?.total) || 0;\nconst byId = new Map(); // a contact edited during paging can appear on two pages: keep the newest\nfor (const page of pages) {\n  for (const r of page.results || []) {\n    const prev = byId.get(r.id);\n    if (!prev || Date.parse(r.properties.lastmodifieddate) >= Date.parse(prev.properties.lastmodifieddate)) byId.set(r.id, r);\n  }\n}\n\nconst now = Date.now();\nconst day = (v) => (v ? String(v).slice(0, 10) : '');\nconst rows = [...byId.values()].map(({ id, properties: p }) => {\n  const lastActivity = Date.parse(p.hs_last_sales_activity_timestamp);\n  return {\n    json: {\n      hubspot_id: String(id),\n      email: p.email || '',\n      name: [p.firstname, p.lastname].filter(Boolean).join(' '),\n      company: p.company || '',\n      job_title: p.jobtitle || '',\n      phone: p.phone || '',\n      lifecycle_stage: STAGE[p.lifecyclestage] || p.lifecyclestage || '',\n      lead_status: STATUS[p.hs_lead_status] || p.hs_lead_status || '',\n      owner_id: p.hubspot_owner_id || '',\n      deals: Number(p.num_associated_deals) || 0,\n      created: day(p.createdate),\n      last_modified: p.lastmodifieddate,\n      days_since_sales_activity: Number.isFinite(lastActivity) ? Math.floor((now - lastActivity) / 86400000) : '',\n      synced_at: new Date(now).toISOString(),\n    },\n  };\n});\n\nif (total > SEARCH_CAP) {\n  // The next run continues from the newest lastmodifieddate seen, so a big backlog is caught up over several runs.\n  rows.forEach((r) => { r.json.sync_note = `backlog: ${total} changed contacts, synced in parts`; });\n}\nreturn rows;\n"
+      },
+      "notes": "Flatten pages · dedupe · labels",
+      "notesInFlow": true
+    },
+    {
+      "id": "upsert-crm-contacts-sheet",
+      "name": "Upsert CRM Contacts Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        400
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "CRM Contacts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "hubspot_id": "={{ $json.hubspot_id }}",
+            "email": "={{ $json.email }}",
+            "name": "={{ $json.name }}",
+            "company": "={{ $json.company }}",
+            "job_title": "={{ $json.job_title }}",
+            "phone": "={{ $json.phone }}",
+            "lifecycle_stage": "={{ $json.lifecycle_stage }}",
+            "lead_status": "={{ $json.lead_status }}",
+            "owner_id": "={{ $json.owner_id }}",
+            "deals": "={{ $json.deals }}",
+            "created": "={{ $json.created }}",
+            "last_modified": "={{ $json.last_modified }}",
+            "days_since_sales_activity": "={{ $json.days_since_sales_activity }}",
+            "synced_at": "={{ $json.synced_at }}"
+          },
+          "matchingColumns": [
+            "hubspot_id"
+          ],
+          "schema": [
+            {
+              "id": "hubspot_id",
+              "displayName": "hubspot_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "job_title",
+              "displayName": "job_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lifecycle_stage",
+              "displayName": "lifecycle_stage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_status",
+              "displayName": "lead_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "owner_id",
+              "displayName": "owner_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deals",
+              "displayName": "deals",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created",
+              "displayName": "created",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_modified",
+              "displayName": "last_modified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "days_since_sales_activity",
+              "displayName": "days_since_sales_activity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "synced_at",
+              "displayName": "synced_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"CRM Contacts\" · key = hubspot_id",
+      "notesInFlow": true
+    },
+    {
+      "id": "compute-next-cursor",
+      "name": "Compute Next Cursor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1630,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Runs only after the sheet write succeeded, so a failed write never moves the cursor forward\n// (the same contacts are fetched again next run instead of being skipped).\n// The cursor is the newest lastmodifieddate actually received, not \"now\": HubSpot's search index lags a few\n// seconds, and using the clock would skip contacts that were changed just before the run.\nconst rows = $('Map Rows').all().map((i) => i.json);\nconst newest = Math.max(...rows.map((r) => Date.parse(r.last_modified)).filter(Number.isFinite));\n\nreturn [{\n  json: {\n    key: 'contacts_last_modified',\n    value: new Date(newest).toISOString(),\n    rows_synced: rows.length,\n    updated_at: new Date().toISOString(),\n  },\n}];\n"
+      },
+      "notes": "Only after a successful write",
+      "notesInFlow": true
+    },
+    {
+      "id": "save-sync-state",
+      "name": "Save Sync State",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1870,
+        400
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sync State",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "={{ $json.key }}",
+            "value": "={{ $json.value }}",
+            "rows_synced": "={{ $json.rows_synced }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [
+            "key"
+          ],
+          "schema": [
+            {
+              "id": "key",
+              "displayName": "key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "value",
+              "displayName": "value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rows_synced",
+              "displayName": "rows_synced",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Cursor moves forward",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Every Hour": {
+      "main": [
+        [
+          {
+            "node": "Read Sync State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sync State": {
+      "main": [
+        [
+          {
+            "node": "Build Search Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Request": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Search Changed Contacts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Search Changed Contacts": {
+      "main": [
+        [
+          {
+            "node": "Map Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Rows": {
+      "main": [
+        [
+          {
+            "node": "Upsert CRM Contacts Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert CRM Contacts Sheet": {
+      "main": [
+        [
+          {
+            "node": "Compute Next Cursor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Next Cursor": {
+      "main": [
+        [
+          {
+            "node": "Save Sync State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

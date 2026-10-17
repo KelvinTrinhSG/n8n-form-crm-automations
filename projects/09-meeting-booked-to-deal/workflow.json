@@ -1,0 +1,1109 @@
+{
+  "name": "09 · Calendly Booking → HubSpot Contact + Deal → Meetings Sheet → Email Host",
+  "nodes": [
+    {
+      "id": "overview-calendly-booking-hubspot-contact-deal-meetings-sheet-email-host",
+      "name": "Overview · Calendly Booking → HubSpot Contact + Deal → Meetings Sheet → Email Host",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        -50
+      ],
+      "parameters": {
+        "content": "# 📅 09 · Meeting Booked → Deal\n**A booked demo becomes a HubSpot deal automatically. Reschedules and cancellations keep the CRM honest.**\n\n### Problem it solves\nA prospect books a demo in Calendly. The rep has to create the contact and the deal by hand, copy the form answers, and remember to update the deal if the meeting moves or is canceled. Pipeline reports end up wrong.\n\n### Events\n| Calendly event | Result |\n|---|---|\n| `invitee.created` | Contact upsert + **deal** (Appointment scheduled) + row + email |\n| Reschedule | **Same deal kept**, new row, old row \"Moved\" |\n| `invitee.canceled` | Deal → canceled stage + reason, row updated, email |\n\n### Real-world gotchas handled\n- Calendly **reschedule = cancel + create**. The cancel part (`rescheduled: true`) is ignored, so no false \"canceled\" alerts\n- **Webhook retries**: invitee already in the sheet → stop, no second deal\n- **Signature** verified (`t=…,v1=…`), 5-min window\n- Host email missing → falls back to the sales inbox\n\n### Setup\n- Env: `CALENDLY_SIGNING_KEY`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **HubSpot App Token** (contacts + deals write), **Google Sheets**, **SMTP**\n- Calendly webhook subscription (API): events `invitee.created`, `invitee.canceled`",
+        "color": 1,
+        "width": 460,
+        "height": 980
+      }
+    },
+    {
+      "id": "stage-1-1-receive",
+      "name": "Stage 1 · ① Receive",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -50
+      ],
+      "parameters": {
+        "content": "## ① Receive\nVerify first, ack fast.",
+        "color": 4,
+        "width": 1200,
+        "height": 980
+      }
+    },
+    {
+      "id": "stage-2-2-crm",
+      "name": "Stage 2 · ② CRM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1240,
+        -50
+      ],
+      "parameters": {
+        "content": "## ② CRM\nTop: booked → dedupe → contact → deal.\nBottom: canceled → find deal → move stage.",
+        "color": 6,
+        "width": 1200,
+        "height": 980
+      }
+    },
+    {
+      "id": "stage-3-3-save-notify",
+      "name": "Stage 3 · ③ Save & notify",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        -50
+      ],
+      "parameters": {
+        "content": "## ③ Save & notify\nMeetings sheet + host email.\nTop: booked · bottom: canceled.",
+        "color": 5,
+        "width": 480,
+        "height": 980
+      }
+    },
+    {
+      "id": "calendly-webhook",
+      "name": "Calendly Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calendly",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "webhookId": "7e1a3b5c-9d2f-4a68-8c0e-4f3a2b1c0d09",
+      "notes": "invitee.created / invitee.canceled",
+      "notesInFlow": true
+    },
+    {
+      "id": "verify-parse-event",
+      "name": "Verify & Parse Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        310,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Verifies Calendly's webhook signature, then flattens the event into the fields the workflow needs.\n// Header: \"Calendly-Webhook-Signature: t=<unix>,v1=<hex HMAC-SHA256 of `${t}.${raw body}`>\"\n// n8n setup: NODE_FUNCTION_ALLOW_BUILTIN=crypto, N8N_BLOCK_ENV_ACCESS_IN_NODE=false, CALENDLY_SIGNING_KEY=<key>.\n//\n// Event kinds:\n//   invitee.created                      → booked (old_invitee set = it is a reschedule)\n//   invitee.canceled + rescheduled=true  → ignored (Calendly sends a new invitee.created right after)\n//   invitee.canceled                     → canceled\nconst crypto = require('crypto');\nconst MAX_SKEW_SECONDS = 300;\nconst item = $input.first();\nconst headers = item.json.headers || {};\nconst body = item.json.body || {};\nconst key = $env.CALENDLY_SIGNING_KEY;\n\nconst invalid = (reason) => [{ json: { valid: false, reason } }];\nif (!key) return invalid('CALENDLY_SIGNING_KEY not set');\nlet raw;\ntry { raw = (await this.helpers.getBinaryDataBuffer(0, 'data')).toString('utf8'); } catch (e) { return invalid('raw body missing'); }\n\nconst sigHeader = String(headers['calendly-webhook-signature'] || '');\nconst parts = Object.fromEntries(sigHeader.split(',').map((p) => p.trim().split('=')));\nif (!parts.t || !parts.v1) return invalid('no signature header');\nif (Math.abs(Date.now() / 1000 - Number(parts.t)) > MAX_SKEW_SECONDS) return invalid('signature timestamp too old');\nconst expected = crypto.createHmac('sha256', key).update(`${parts.t}.${raw}`).digest('hex');\nconst a = Buffer.from(parts.v1);\nconst b = Buffer.from(expected);\nif (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return invalid('bad signature');\n\nconst p = body.payload || {};\nconst ev = p.scheduled_event || {};\nconst host = (ev.event_memberships || [])[0] || {};\nconst answers = (p.questions_and_answers || []).map((x) => ({ q: x.question, a: x.answer }));\nconst answer = (re) => (answers.find((x) => re.test(x.q || '')) || {}).a || '';\n\nlet kind = 'ignored';\nif (body.event === 'invitee.created') kind = 'booked';\nelse if (body.event === 'invitee.canceled') kind = p.rescheduled ? 'ignored' : 'canceled';\n\nconst firstName = p.first_name || String(p.name || '').split(' ')[0] || '';\nconst lastName = p.last_name || String(p.name || '').split(' ').slice(1).join(' ');\nconst company = answer(/company|organi[sz]ation|business/i);\nconst phone = p.text_reminder_number || answer(/phone|mobile/i);\n\nconst contactProperties = Object.fromEntries(Object.entries({\n  email: String(p.email || '').toLowerCase(), firstname: firstName, lastname: lastName, company, phone,\n}).filter(([, v]) => v));\n\nreturn [{\n  json: {\n    valid: true,\n    kind,\n    event: body.event,\n    invitee_uri: p.uri || '',\n    old_invitee_uri: p.old_invitee || '',\n    lookup_uri: p.old_invitee || p.uri || '',\n    email: contactProperties.email || '',\n    name: p.name || [firstName, lastName].join(' ').trim(),\n    company,\n    meeting_name: ev.name || '',\n    start_time: ev.start_time || '',\n    end_time: ev.end_time || '',\n    invitee_timezone: p.timezone || '',\n    join_url: (ev.location || {}).join_url || '',\n    host_name: host.user_name || '',\n    host_email: host.user_email || '',\n    answers,\n    utm_source: (p.tracking || {}).utm_source || '',\n    utm_campaign: (p.tracking || {}).utm_campaign || '',\n    cancel_reason: (p.cancellation || {}).reason || '',\n    canceled_by: (p.cancellation || {}).canceled_by || '',\n    contact_properties: contactProperties,\n    deal_name: `${company || p.name || p.email} · ${ev.name || 'Meeting'}`,\n  },\n}];\n"
+      },
+      "notes": "Signature · flatten · classify",
+      "notesInFlow": true
+    },
+    {
+      "id": "signature-valid",
+      "name": "Signature Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        550,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-valid-true",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Fail closed",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        790,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Fast ack, then work",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        790,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "notes": "Not from Calendly",
+      "notesInFlow": true
+    },
+    {
+      "id": "route-by-event",
+      "name": "Route by Event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1030,
+        400
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-kind-equals-booked",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "booked",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "booked"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "json-kind-equals-canceled",
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "canceled",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "canceled"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "booked · canceled · (other ignored)",
+      "notesInFlow": true
+    },
+    {
+      "id": "find-booking-rows",
+      "name": "Find Booking Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1310,
+        300
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Meetings",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "invitee_uri",
+              "lookupValue": "={{ $('Verify & Parse Event').first().json.lookup_uri }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "This or the rescheduled booking",
+      "notesInFlow": true
+    },
+    {
+      "id": "find-canceled-booking",
+      "name": "Find Canceled Booking",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1310,
+        500
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Meetings",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "invitee_uri",
+              "lookupValue": "={{ $('Verify & Parse Event').first().json.invitee_uri }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "Get deal_id",
+      "notesInFlow": true
+    },
+    {
+      "id": "check-existing-booking",
+      "name": "Check Existing Booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1550,
+        300
+      ],
+      "parameters": {
+        "jsCode": "// Idempotency + reschedule handling, using the \"Meetings\" sheet as memory.\n//   Same invitee already in the sheet → Calendly retried the webhook → stop (no second deal).\n//   Reschedule of a known booking → reuse its deal, do not create a new one.\n//   Otherwise → new booking.\nconst ev = $('Verify & Parse Event').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r.invitee_uri);\n\nif (rows.some((r) => r.invitee_uri === ev.invitee_uri)) return [];\n\nconst previous = ev.old_invitee_uri && rows.find((r) => r.invitee_uri === ev.old_invitee_uri);\nif (previous && previous.deal_id) {\n  return [{\n    json: {\n      ...ev,\n      mode: 'reschedule',\n      deal_id: String(previous.deal_id),\n      hubspot_contact_id: String(previous.hubspot_contact_id || ''),\n      previous_start: previous.start_time,\n    },\n  }];\n}\nreturn [{ json: { ...ev, mode: 'new', deal_id: '', hubspot_contact_id: '', previous_start: '' } }];\n"
+      },
+      "notes": "Duplicate → stop · reschedule → reuse deal",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-cancellation",
+      "name": "Build Cancellation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1550,
+        500
+      ],
+      "parameters": {
+        "jsCode": "// A real cancellation (not a reschedule): update the sheet row, move the deal, tell the host.\n// The deal goes to CANCELED_STAGE. Many teams use \"closedlost\"; set your own \"Meeting canceled\" stage id here.\nconst CANCELED_STAGE = 'closedlost';\nconst TZ = 'America/New_York';\nconst ev = $('Verify & Parse Event').first().json;\nconst row = $input.all().map((i) => i.json).find((r) => r.invitee_uri === ev.invitee_uri) || {};\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst when = ev.start_time ? `${new Date(ev.start_time).toLocaleString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET` : '';\nconst dealId = String(row.deal_id || '');\n\nreturn [{\n  json: {\n    invitee_uri: ev.invitee_uri,\n    status: 'Canceled',\n    email: ev.email,\n    name: ev.name,\n    company: row.company || ev.company,\n    meeting_name: ev.meeting_name,\n    start_time: ev.start_time,\n    host_email: ev.host_email,\n    hubspot_contact_id: row.hubspot_contact_id || '',\n    deal_id: dealId,\n    rescheduled_from: row.rescheduled_from || '',\n    cancel_reason: `${ev.canceled_by ? `${ev.canceled_by}: ` : ''}${ev.cancel_reason || 'no reason given'}`,\n    utm_source: row.utm_source || ev.utm_source,\n    updated_at: new Date().toISOString(),\n    has_deal: Boolean(dealId),\n    deal_update: { properties: { dealstage: CANCELED_STAGE, closed_lost_reason: `Meeting canceled: ${ev.cancel_reason || 'no reason given'}`.slice(0, 250) } },\n    email_to: ev.host_email,\n    email_subject: `❌ Canceled: ${ev.name} · ${when}`,\n    email_html: `<p><b>${esc(ev.name)}</b> &lt;${esc(ev.email)}&gt; canceled <b>${esc(ev.meeting_name)}</b> on ${when}.</p>`\n      + `<p>Reason: ${esc(ev.cancel_reason || 'no reason given')}${ev.canceled_by ? ` (by ${esc(ev.canceled_by)})` : ''}</p>`\n      + `<p>${dealId ? `Deal ${esc(dealId)} moved to \"${CANCELED_STAGE}\".` : 'No deal found for this booking (booked before the automation, or never synced).'} Worth a follow-up email to rebook.</p>`,\n  },\n}];\n"
+      },
+      "notes": "Status · reason · deal stage",
+      "notesInFlow": true
+    },
+    {
+      "id": "needs-new-deal",
+      "name": "Needs New Deal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1790,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-mode-new-true",
+              "leftValue": "={{ $json.mode === 'new' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Reschedules skip creation",
+      "notesInFlow": true
+    },
+    {
+      "id": "has-deal",
+      "name": "Has Deal?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1790,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-has-deal-true",
+              "leftValue": "={{ $json.has_deal }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Booked before automation?",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-upsert-contact",
+      "name": "HubSpot · Upsert Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2030,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inputs: [{ idProperty: 'email', id: $json.contact_properties.email, properties: $json.contact_properties }] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "stopWorkflow",
+      "notes": "By invitee email",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-update-deal-stage",
+      "name": "HubSpot · Update Deal Stage",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2030,
+        500
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals/{{ $json.deal_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.deal_update) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Stage + closed_lost_reason",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-create-deal",
+      "name": "HubSpot · Create Deal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2270,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/deals",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: { dealname: $('Check Existing Booking').first().json.deal_name, pipeline: 'default', dealstage: 'appointmentscheduled' },\n  associations: [{ to: { id: $json.results[0].id }, types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 }] }]\n}) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "stopWorkflow",
+      "notes": "Stage: Appointment scheduled · linked to contact",
+      "notesInFlow": true
+    },
+    {
+      "id": "build-meeting-record",
+      "name": "Build Meeting Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2550,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Builds the \"Meetings\" sheet rows and the email to the host.\n// New booking: 1 row. Reschedule: the new row + the old row marked \"Moved\".\nconst TZ = 'America/New_York';\nconst b = $('Check Existing Booking').first().json;\n\n// These nodes only ran for new bookings; on a reschedule the ids come from the sheet.\nlet contactId = b.hubspot_contact_id;\nlet dealId = b.deal_id;\ntry { contactId = $('HubSpot · Upsert Contact').first().json.results[0].id; } catch (e) { /* reschedule */ }\ntry { dealId = $('HubSpot · Create Deal').first().json.id; } catch (e) { /* reschedule */ }\n\nconst when = (iso) => (iso ? `${new Date(iso).toLocaleString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET` : '');\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst now = new Date().toISOString();\nconst isReschedule = b.mode === 'reschedule';\n\nconst row = {\n  invitee_uri: b.invitee_uri,\n  status: isReschedule ? 'Rescheduled' : 'Booked',\n  email: b.email,\n  name: b.name,\n  company: b.company,\n  meeting_name: b.meeting_name,\n  start_time: b.start_time,\n  host_email: b.host_email,\n  hubspot_contact_id: contactId,\n  deal_id: dealId,\n  rescheduled_from: isReschedule ? b.old_invitee_uri : '',\n  cancel_reason: '',\n  utm_source: b.utm_source,\n  updated_at: now,\n};\n\nconst qa = b.answers.map((x) => `<li><b>${esc(x.q)}</b><br>${esc(x.a)}</li>`).join('');\nconst subject = isReschedule\n  ? `🔁 Rescheduled: ${b.name} → ${when(b.start_time)} (was ${when(b.previous_start)})`\n  : `📅 New meeting: ${b.name}${b.company ? ` (${b.company})` : ''} · ${when(b.start_time)}`;\nconst html = `<div style=\"font-family:Arial;font-size:14px\">\n<p><b>${esc(b.name)}</b> &lt;${esc(b.email)}&gt;${b.company ? ` · ${esc(b.company)}` : ''}</p>\n<p>${esc(b.meeting_name)} · <b>${when(b.start_time)}</b>${b.join_url ? ` · <a href=\"${esc(b.join_url)}\">join link</a>` : ''}</p>\n${isReschedule ? `<p>Moved from ${when(b.previous_start)}. Same deal kept.</p>` : '<p>Deal created in HubSpot (stage: Appointment scheduled).</p>'}\n<p>HubSpot deal ID: ${esc(dealId)} · contact ID: ${esc(contactId)}</p>\n${qa ? `<h4 style=\"margin:12px 0 4px\">Their answers</h4><ul>${qa}</ul>` : ''}\n</div>`;\n\nconst items = [{ json: { ...row, email_to: b.host_email, email_subject: subject, email_html: html } }];\nif (isReschedule) {\n  items.push({ json: { ...row, invitee_uri: b.old_invitee_uri, status: 'Moved', start_time: b.previous_start, rescheduled_from: '' } });\n}\nreturn items;\n"
+      },
+      "notes": "Row(s) + host email",
+      "notesInFlow": true
+    },
+    {
+      "id": "save-meeting-rows",
+      "name": "Save Meeting Rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2790,
+        100
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Meetings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invitee_uri": "={{ $json.invitee_uri }}",
+            "status": "={{ $json.status }}",
+            "email": "={{ $json.email }}",
+            "name": "={{ $json.name }}",
+            "company": "={{ $json.company }}",
+            "meeting_name": "={{ $json.meeting_name }}",
+            "start_time": "={{ $json.start_time }}",
+            "host_email": "={{ $json.host_email }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}",
+            "deal_id": "={{ $json.deal_id }}",
+            "rescheduled_from": "={{ $json.rescheduled_from }}",
+            "cancel_reason": "={{ $json.cancel_reason }}",
+            "utm_source": "={{ $json.utm_source }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [
+            "invitee_uri"
+          ],
+          "schema": [
+            {
+              "id": "invitee_uri",
+              "displayName": "invitee_uri",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meeting_name",
+              "displayName": "meeting_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "start_time",
+              "displayName": "start_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "host_email",
+              "displayName": "host_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rescheduled_from",
+              "displayName": "rescheduled_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cancel_reason",
+              "displayName": "cancel_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Tab \"Meetings\" · key = invitee_uri",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-host-booked",
+      "name": "Email Host (booked)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2790,
+        300
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "={{ $json.email_to || 'sales@example.com' }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "executeOnce": true,
+      "notes": "Once, even for 2 rows",
+      "notesInFlow": true
+    },
+    {
+      "id": "update-meeting-row",
+      "name": "Update Meeting Row",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2790,
+        500
+      ],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Meetings",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "invitee_uri": "={{ $json.invitee_uri }}",
+            "status": "={{ $json.status }}",
+            "email": "={{ $json.email }}",
+            "name": "={{ $json.name }}",
+            "company": "={{ $json.company }}",
+            "meeting_name": "={{ $json.meeting_name }}",
+            "start_time": "={{ $json.start_time }}",
+            "host_email": "={{ $json.host_email }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}",
+            "deal_id": "={{ $json.deal_id }}",
+            "rescheduled_from": "={{ $json.rescheduled_from }}",
+            "cancel_reason": "={{ $json.cancel_reason }}",
+            "utm_source": "={{ $json.utm_source }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [
+            "invitee_uri"
+          ],
+          "schema": [
+            {
+              "id": "invitee_uri",
+              "displayName": "invitee_uri",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "meeting_name",
+              "displayName": "meeting_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "start_time",
+              "displayName": "start_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "host_email",
+              "displayName": "host_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rescheduled_from",
+              "displayName": "rescheduled_from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cancel_reason",
+              "displayName": "cancel_reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "status = Canceled",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-host-canceled",
+      "name": "Email Host (canceled)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2790,
+        700
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "={{ $json.email_to || 'sales@example.com' }}",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Prompt a rebooking follow-up",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Calendly Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify & Parse Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify & Parse Event": {
+      "main": [
+        [
+          {
+            "node": "Signature Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Valid?": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [
+          {
+            "node": "Route by Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Event": {
+      "main": [
+        [
+          {
+            "node": "Find Booking Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Canceled Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Booking Rows": {
+      "main": [
+        [
+          {
+            "node": "Check Existing Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Existing Booking": {
+      "main": [
+        [
+          {
+            "node": "Needs New Deal?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs New Deal?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Upsert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Meeting Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Create Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Create Deal": {
+      "main": [
+        [
+          {
+            "node": "Build Meeting Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Meeting Record": {
+      "main": [
+        [
+          {
+            "node": "Save Meeting Rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Host (booked)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Canceled Booking": {
+      "main": [
+        [
+          {
+            "node": "Build Cancellation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Cancellation": {
+      "main": [
+        [
+          {
+            "node": "Has Deal?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Meeting Row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email Host (canceled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Deal?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Update Deal Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

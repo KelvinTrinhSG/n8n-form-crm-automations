@@ -1,0 +1,12 @@
+{
+  "name": "n8n-form-crm-automations",
+  "private": true,
+  "type": "module",
+  "description": "Ten n8n workflows around forms, HubSpot CRM, Google Sheets and email.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test \"projects/**/*.test.mjs\"",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

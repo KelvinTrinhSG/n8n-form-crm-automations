@@ -1,0 +1,580 @@
+{
+  "name": "03 · CRM Retry Queue: failed syncs → backoff → HubSpot → escalate",
+  "nodes": [
+    {
+      "id": "overview-crm-retry-queue-failed-syncs-backoff-hubspot-escalate",
+      "name": "Overview · CRM Retry Queue: failed syncs → backoff → HubSpot → escalate",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        150
+      ],
+      "parameters": {
+        "content": "# 🔁 03 · CRM Retry Queue\n**When HubSpot is down or the token expires, leads wait in a queue instead of disappearing.**\n\n### Problem it solves\nA lead that fails to sync usually ends up as a red execution nobody opens. Someone notices days later that the CRM is missing contacts, then replays them by hand.\n\n### How it works\n- **01** writes failed leads to the **Failed Syncs** tab (status `pending`)\n- Every 15 min this worker retries the due rows (max 50)\n- Success → `resolved` + HubSpot ID\n- Failure → classified:\n  - 400/404/422 → `dead` now (data problem)\n  - 401/403 → retry + email ops once (token problem)\n  - 429/5xx/timeout → backoff 15m → 30m → 1h → 2h → 4h\n- After 6 attempts → `dead` + email ops\n\n### Manual fix\nEdit the payload in the sheet, set status back to `pending`. The next run picks it up.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token**, **SMTP**",
+        "color": 1,
+        "width": 460,
+        "height": 640
+      }
+    },
+    {
+      "id": "stage-1-1-schedule",
+      "name": "Stage 1 · ① Schedule",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        150
+      ],
+      "parameters": {
+        "content": "## ① Schedule\nEvery 15 minutes.",
+        "color": 4,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-2-2-load-due-work",
+      "name": "Stage 2 · ② Load due work",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        280,
+        150
+      ],
+      "parameters": {
+        "content": "## ② Load due work\nRead queue, pick due rows.",
+        "color": 6,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-3-3-retry",
+      "name": "Stage 3 · ③ Retry",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        150
+      ],
+      "parameters": {
+        "content": "## ③ Retry\nOne upsert per row.\nRed output = still failing.",
+        "color": 2,
+        "width": 240,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-4-4-record-outcome",
+      "name": "Stage 4 · ④ Record outcome",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        150
+      ],
+      "parameters": {
+        "content": "## ④ Record outcome\nResolved, rescheduled or dead.",
+        "color": 5,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "stage-5-5-escalate",
+      "name": "Stage 5 · ⑤ Escalate",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        150
+      ],
+      "parameters": {
+        "content": "## ⑤ Escalate\nHumans only see what needs a human.",
+        "color": 3,
+        "width": 480,
+        "height": 580
+      }
+    },
+    {
+      "id": "every-15-minutes",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        70,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "notes": "Cron */15 * * * *",
+      "notesInFlow": true
+    },
+    {
+      "id": "read-retry-queue",
+      "name": "Read Retry Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        350,
+        400
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Failed Syncs",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "notes": "Tab \"Failed Syncs\"",
+      "notesInFlow": true
+    },
+    {
+      "id": "pick-due-retries",
+      "name": "Pick Due Retries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        590,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Picks the queue rows that are due for another attempt.\n// A row is due when status = pending and next_retry_at is in the past.\n// At most MAX_PER_RUN rows per run, oldest first, so a long outage does not hit HubSpot's rate limit on recovery.\nconst MAX_PER_RUN = 50;\nconst now = Date.now();\n\nconst rows = $input.all()\n  .map((i) => i.json)\n  .filter((r) => r.queue_id && String(r.status).toLowerCase() === 'pending')\n  .filter((r) => !r.next_retry_at || Date.parse(r.next_retry_at) <= now)\n  .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))\n  .slice(0, MAX_PER_RUN);\n\nreturn rows.map((r) => {\n  let properties = null;\n  try { properties = JSON.parse(r.payload); } catch (e) { /* sent as-is; HubSpot answers 400 → marked dead */ }\n  return {\n    json: {\n      queue_id: r.queue_id,\n      email: r.email,\n      attempts: Number(r.attempts) || 0,\n      created_at: r.created_at,\n      source_workflow: r.source_workflow,\n      request_body: {\n        inputs: [{ idProperty: 'email', id: r.email, properties: properties || { invalid_payload: r.payload } }],\n      },\n    },\n  };\n});\n"
+      },
+      "notes": "pending + due · max 50 · oldest first",
+      "notesInFlow": true
+    },
+    {
+      "id": "hubspot-upsert-contact",
+      "name": "HubSpot · Upsert Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        870,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/batch/upsert",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": false,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "No inner retry: the queue is the retry",
+      "notesInFlow": true
+    },
+    {
+      "id": "mark-resolved",
+      "name": "Mark Resolved",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Success branch: the contact is now in HubSpot. Close the queue row.\nconst row = $('Pick Due Retries').item.json;\nconst result = ($json.results || [])[0] || {};\n\nreturn {\n  json: {\n    queue_id: row.queue_id,\n    attempts: row.attempts + 1,\n    status: 'resolved',\n    next_retry_at: '',\n    resolved_at: new Date().toISOString(),\n    hubspot_contact_id: result.id || '',\n    last_error: '',\n  },\n};\n"
+      },
+      "notes": "status = resolved",
+      "notesInFlow": true
+    },
+    {
+      "id": "schedule-next-retry",
+      "name": "Schedule Next Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1150,
+        500
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Failure branch: decide whether to try again later or give up.\n//   400 / 404 / 422  → the data itself is wrong; retrying will never work → \"dead\" now\n//   401 / 403        → token revoked or missing scope; retry, but tell ops on the first failure\n//   429 / 5xx / network → temporary; retry with exponential backoff\n// Backoff: 15 min, 30 min, 1 h, 2 h, 4 h, then dead after MAX_ATTEMPTS.\nconst MAX_ATTEMPTS = 6;\nconst BASE_DELAY_MIN = 15;\nconst MAX_DELAY_MIN = 6 * 60;\n\nconst row = $('Pick Due Retries').item.json;\nconst err = typeof $json.error === 'object' && $json.error ? $json.error : { message: $json.error || $json.message || 'unknown error' };\nconst message = String(err.description || err.message || '').slice(0, 500);\nconst code = Number(err.httpCode || err.status || (message.match(/\\b([45]\\d\\d)\\b/) || [])[1]) || 0;\n\nconst attempts = row.attempts + 1;\nlet kind = 'temporary';\nif ([400, 404, 409, 422].includes(code)) kind = 'permanent';\nelse if ([401, 403].includes(code)) kind = 'auth';\n\nlet status = 'pending';\nif (kind === 'permanent' || attempts >= MAX_ATTEMPTS) status = 'dead';\n\nconst delayMin = Math.min(BASE_DELAY_MIN * 2 ** (attempts - 1), MAX_DELAY_MIN);\nconst jitterMs = Math.floor(Math.random() * 60 * 1000); // spread retries so they do not all fire together\nconst nextRetryAt = status === 'pending' ? new Date(Date.now() + delayMin * 60 * 1000 + jitterMs).toISOString() : '';\n\nconst escalate = status === 'dead' || (kind === 'auth' && attempts === 1);\nconst esc = (v) => String(v ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' }[c]));\nconst why = {\n  permanent: 'HubSpot rejected the data. Fix the payload in the sheet, set status back to \"pending\" and it will be retried.',\n  auth: 'HubSpot refused the token. Check the private app token and its scopes (crm.objects.contacts.write) in n8n credentials.',\n  temporary: `Gave up after ${attempts} attempts.`,\n}[kind];\n\nreturn {\n  json: {\n    queue_id: row.queue_id,\n    email: row.email,\n    attempts,\n    status,\n    next_retry_at: nextRetryAt,\n    last_error_code: code ? String(code) : '',\n    last_error: message,\n    error_kind: kind,\n    escalate,\n    email_subject: `[CRM sync] ${status === 'dead' ? 'Gave up on' : 'Auth problem for'} ${row.email} (${code || 'no code'})`,\n    email_html: `<p><b>Queue ID:</b> ${esc(row.queue_id)}<br><b>Email:</b> ${esc(row.email)}<br><b>Source:</b> ${esc(row.source_workflow)}<br>`\n      + `<b>Attempts:</b> ${attempts}<br><b>Error ${code || ''}:</b> ${esc(message)}</p><p>${esc(why)}</p>`,\n  },\n};\n"
+      },
+      "notes": "Classify error · backoff · give up",
+      "notesInFlow": true
+    },
+    {
+      "id": "update-row-resolved",
+      "name": "Update Row (resolved)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        300
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Failed Syncs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "queue_id": "={{ $json.queue_id }}",
+            "attempts": "={{ $json.attempts }}",
+            "status": "={{ $json.status }}",
+            "next_retry_at": "={{ $json.next_retry_at }}",
+            "resolved_at": "={{ $json.resolved_at }}",
+            "hubspot_contact_id": "={{ $json.hubspot_contact_id }}",
+            "last_error": "={{ $json.last_error }}"
+          },
+          "matchingColumns": [
+            "queue_id"
+          ],
+          "schema": [
+            {
+              "id": "queue_id",
+              "displayName": "queue_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "attempts",
+              "displayName": "attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_retry_at",
+              "displayName": "next_retry_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved_at",
+              "displayName": "resolved_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hubspot_contact_id",
+              "displayName": "hubspot_contact_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Match on queue_id",
+      "notesInFlow": true
+    },
+    {
+      "id": "update-row-failed",
+      "name": "Update Row (failed)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1390,
+        500
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/PASTE_YOUR_SPREADSHEET_ID/edit",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Failed Syncs",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "queue_id": "={{ $json.queue_id }}",
+            "attempts": "={{ $json.attempts }}",
+            "status": "={{ $json.status }}",
+            "next_retry_at": "={{ $json.next_retry_at }}",
+            "last_error_code": "={{ $json.last_error_code }}",
+            "last_error": "={{ $json.last_error }}"
+          },
+          "matchingColumns": [
+            "queue_id"
+          ],
+          "schema": [
+            {
+              "id": "queue_id",
+              "displayName": "queue_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "attempts",
+              "displayName": "attempts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_retry_at",
+              "displayName": "next_retry_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error_code",
+              "displayName": "last_error_code",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_error",
+              "displayName": "last_error",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Match on queue_id",
+      "notesInFlow": true
+    },
+    {
+      "id": "needs-a-human",
+      "name": "Needs a Human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1670,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-escalate-true",
+              "leftValue": "={{ $json.escalate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "dead, or auth error",
+      "notesInFlow": true
+    },
+    {
+      "id": "email-ops",
+      "name": "Email Ops",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1910,
+        400
+      ],
+      "parameters": {
+        "fromEmail": "automation@example.com",
+        "toEmail": "ops@example.com",
+        "subject": "={{ $json.email_subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.email_html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "One email per escalated row",
+      "notesInFlow": true
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Read Retry Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Retry Queue": {
+      "main": [
+        [
+          {
+            "node": "Pick Due Retries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Due Retries": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Upsert Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HubSpot · Upsert Contact": {
+      "main": [
+        [
+          {
+            "node": "Mark Resolved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Schedule Next Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Resolved": {
+      "main": [
+        [
+          {
+            "node": "Update Row (resolved)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Next Retry": {
+      "main": [
+        [
+          {
+            "node": "Update Row (failed)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Needs a Human?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs a Human?": {
+      "main": [
+        [
+          {
+            "node": "Email Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/New_York",
+    "saveManualExecutions": true
+  }
+}

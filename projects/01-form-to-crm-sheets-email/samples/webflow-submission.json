@@ -1,0 +1,15 @@
+{
+  "Name": "  JANE   DOE ",
+  "Email": " Jane.Doe@GMIAL.com ",
+  "Phone": "(415) 555-0123",
+  "Company Name": "BrightDesk",
+  "Job Title": "Operations Manager",
+  "Website": "www.BrightDesk.io/pricing",
+  "Message": "We have 12 support agents and want to route website leads into HubSpot automatically. Can we talk this week?",
+  "Consent": "on",
+  "form_name": "contact-us",
+  "page_url": "https://example.com/contact",
+  "utm_source": "google",
+  "utm_medium": "cpc",
+  "utm_campaign": "crm-automation"
+}
