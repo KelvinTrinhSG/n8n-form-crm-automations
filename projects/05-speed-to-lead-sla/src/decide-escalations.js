@@ -5,7 +5,14 @@
 const MANAGER_EMAIL = 'sales@example.com';
 const candidates = $('Find SLA Candidates').first().json.candidates;
 const crm = Object.fromEntries(($('HubSpot · Batch Read Contacts').first().json.results || []).map((r) => [String(r.id), r.properties || {}]));
-const reps = Object.fromEntries($input.all().map((i) => i.json).filter((r) => r.hubspot_owner_id).map((r) => [String(r.hubspot_owner_id), r]));
+// owner id → rep. An inactive rep (left the company, but still owns contacts in HubSpot) must not receive
+// reminders nobody will read: their leads go to the manager. Seen live on 2026-10-18.
+const isActive = (r) => ['true', 'yes', '1', 'y', 'x'].includes(String(r.active).trim().toLowerCase());
+const reps = {};
+for (const r of $input.all().map((i) => i.json).filter((x) => x.hubspot_owner_id)) {
+  const id = String(r.hubspot_owner_id);
+  if (!reps[id] || (!isActive(reps[id]) && isActive(r))) reps[id] = r; // prefer an active row for the same id
+}
 const UNTOUCHED = ['', 'NEW', 'OPEN'];
 
 const now = new Date().toISOString();
@@ -17,8 +24,9 @@ return candidates.map((c) => {
 
   if (contacted) return { json: { ...c, sla_level: 'met', sla_alerted_at: now, notify: false } };
 
-  const owner = p && reps[String(p.hubspot_owner_id || '')];
-  // No owner, or owner not in the reps sheet: nobody will get a "rep" reminder, so go to the manager.
+  const rep = p && reps[String(p.hubspot_owner_id || '')];
+  const owner = rep && isActive(rep) ? rep : null;
+  // No owner, owner not in the reps sheet, or owner inactive: nobody will act on a "rep" reminder, so go to the manager.
   const level = !owner ? 'manager' : c.due_level;
   const recipient = level === 'rep' ? owner.email : MANAGER_EMAIL;
   return {
@@ -28,7 +36,7 @@ return candidates.map((c) => {
       sla_alerted_at: now,
       notify: true,
       recipient,
-      owner_name: owner ? owner.name : '(no owner)',
+      owner_name: owner ? owner.name : rep ? `${rep.name} (inactive)` : '(no owner)',
       missing_from_crm: !p,
     },
   };

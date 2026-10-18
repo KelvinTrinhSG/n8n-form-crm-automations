@@ -2,7 +2,23 @@
 
 > No lead waits more than one business hour without someone being reminded, and four business hours without the sales manager knowing. Leads already contacted are never nagged about.
 
-**Status:** workflow built and importable; business-hour math (weekends, Friday evening, DST) and escalation logic covered by 5 unit tests with a frozen clock. Not yet run against a live HubSpot account.
+**Status:** **run live on 2026-10-18** against a HubSpot free account, Google Sheets and Gmail, using the leads created by project 01 and the rep list of project 04. The test ran on a Sunday, so the two leads' `last_submitted_at` were moved back to Friday 16 October (ET) and the schedule was switched to every minute for single runs, then restored. Results: a lead waiting **120 business minutes** with an owner → reminder to the owner; a lead waiting **540 business minutes** with no owner → escalation to the manager; a second run sent **nothing** and made no HubSpot call. The "already contacted → `met`" branch has not been run live yet. Logic is also covered by 6 unit tests with a frozen clock.
+
+| Alerts sent (HubSpot checked, two recipients) | Next run: already alerted → stops early, no repeat |
+|---|---|
+| ![Execution sending SLA alerts](../../docs/screenshots/05-execution-alerts.png) | ![Execution with nothing new to send](../../docs/screenshots/05-execution-no-repeat.png) |
+
+**`Leads` tab after the run**: `sla_level` remembers what was already sent
+
+![Leads tab SLA columns](../../docs/screenshots/05-sheet-leads-sla.png)
+
+| Reminder to the owner (1 business hour) | Escalation to the manager (4 business hours / no owner) |
+|---|---|
+| ![Reminder email](../../docs/screenshots/05-email-reminder.png) | ![SLA breach email](../../docs/screenshots/05-email-breach.png) |
+
+### What the live run caught
+
+The first live run sent the owner reminder to **a rep marked `active = FALSE`** in the `Sales Reps` tab. The owner-id → rep lookup ignored the `active` column, and with several rows sharing one owner id the last row won. In a real team this is the rep who left the company but still owns contacts in HubSpot: the reminder lands in a mailbox nobody reads. Now an active row wins when ids repeat, and a contact owned only by an inactive rep is escalated to the manager with the owner shown as `Name (inactive)`. A unit test reproduces the live case.
 
 ---
 

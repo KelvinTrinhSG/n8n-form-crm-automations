@@ -56,7 +56,7 @@ test('HubSpot activity after submission marks the lead met; no owner goes to man
     { id: '3', properties: { hubspot_owner_id: '' } },
   ];
   const out = await runCode(src('decide-escalations.js'), {
-    items: [{ hubspot_owner_id: '51001', email: 'alice@example.com', name: 'Alice' }],
+    items: [{ hubspot_owner_id: '51001', email: 'alice@example.com', name: 'Alice', active: 'TRUE' }],
     nodes: { 'Find SLA Candidates': [{ candidates }], 'HubSpot · Batch Read Contacts': [{ results }] },
   });
   assert.deepEqual(out.map((o) => [o.sla_level, o.recipient]), [['met', undefined], ['rep', 'alice@example.com'], ['manager', 'sales@example.com']]);
@@ -64,4 +64,23 @@ test('HubSpot activity after submission marks the lead met; no owner goes to man
   const mails = await runCode(src('group-alerts.js'), { items: out });
   assert.equal(mails.length, 2);
   assert.match(mails.find((m) => m.email_to === 'sales@example.com').email_subject, /SLA breach/);
+});
+
+test('owner who is inactive in Sales Reps → manager, never the inactive rep (live run 2026-10-18)', async () => {
+  const candidates = [{ email: 'a@x.com', hubspot_contact_id: '1', submitted_at: '2026-10-16T20:00:00Z', business_minutes: 120, due_level: 'rep' }];
+  const results = [{ id: '1', properties: { hubspot_owner_id: '777', hs_lead_status: 'NEW' } }];
+  const run = (reps) => runCode(src('decide-escalations.js'), {
+    items: reps, nodes: { 'Find SLA Candidates': [{ candidates }], 'HubSpot · Batch Read Contacts': [{ results }] },
+  });
+  // Live case: several rows share one owner id and the last one is inactive. The active row must win.
+  const [shared] = await run([
+    { hubspot_owner_id: '777', email: 'alice@x.com', name: 'Alice', active: true },
+    { hubspot_owner_id: '777', email: 'frank@x.com', name: 'Frank', active: 'FALSE' },
+  ]);
+  assert.equal(shared.recipient, 'alice@x.com');
+  // Only an inactive rep owns the contact → escalate to the manager.
+  const [gone] = await run([{ hubspot_owner_id: '777', email: 'frank@x.com', name: 'Frank', active: 'FALSE' }]);
+  assert.equal(gone.sla_level, 'manager');
+  assert.equal(gone.recipient, 'sales@example.com');
+  assert.equal(gone.owner_name, 'Frank (inactive)');
 });
