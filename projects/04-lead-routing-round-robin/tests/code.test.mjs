@@ -54,6 +54,7 @@ test('existing HubSpot owner is never replaced', async () => {
   const [out] = await route({ email: 'x@y.com', country: 'US', current_owner_id: '51004' });
   assert.equal(out.changed, false);
   assert.equal(out.owner.name, 'Daniel');
+  assert.match(out.assigned_at, /Z$/, 'kept-owner rows are timestamped in UTC like the others');
   const [mail] = await runCode(src('build-emails.js'), { nodes: { 'Choose Owner': [out] } });
   assert.match(mail.email_subject, /^Your contact got back in touch/);
   assert.equal(mail.email_to, 'daniel@example.com');

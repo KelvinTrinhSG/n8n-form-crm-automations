@@ -2,7 +2,27 @@
 
 > Every new lead gets the right owner in HubSpot within seconds and the rep gets an email. Routing rules live in a Google Sheet the sales manager edits, not in code.
 
-**Status:** workflow built and importable; routing rules covered by 5 unit tests with a sample sales team. Not yet run against a live HubSpot account.
+**Status:** **run live on 2026-10-18** against a HubSpot free account, Google Sheets and Gmail with seven test leads: US round robin, a UK lead while the UK rep is out of office, an enterprise lead, a Canadian lead, and an existing owner kept. The HubSpot account has a single user, so every rep row in the test team uses the same owner ID; the routing decisions are visible in the `Assignments` tab and in which `+alias` mailbox received each email. The "no rep available" branch has not been run live yet. Rules are also covered by 6 unit tests.
+
+| New lead → owner set in HubSpot | Existing owner kept → no HubSpot call |
+|---|---|
+| ![Execution assigning a new lead](../../docs/screenshots/04-execution-new-lead.png) | ![Execution keeping the existing owner](../../docs/screenshots/04-execution-owner-kept.png) |
+
+**Audit trail** (`Assignments` tab): every decision with the rule that produced it
+
+![Assignments tab](../../docs/screenshots/04-sheet-assignments.png)
+
+**Email to the assigned rep**
+
+![Rep email](../../docs/screenshots/04-email-rep.png)
+
+### What the live run caught
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| A rep on holiday still received leads | Google Sheets turned the typed `2026-10-24` into a date shown as `10/24/2026`; comparing that string with `2026-10-18` said the holiday was over | Dates are normalised from ISO, US `M/D/YYYY` and Sheets serial numbers before comparing |
+| A returning customer's owner got a "New lead assigned to you" email, and HubSpot was called to write the same owner again | No distinction between "assigned now" and "owner kept" after the decision | New IF *Owner Changed?*: kept owners skip HubSpot and get a "your contact got back in touch" email |
+| The `Assignments` timestamp column mixed UTC and New York time | Only new assignments set `assigned_at`; kept owners fell back to n8n's `$now` in the workflow timezone | Every decision now carries a UTC timestamp |
 
 ---
 

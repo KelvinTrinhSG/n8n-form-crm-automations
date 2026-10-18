@@ -40,7 +40,8 @@ const toDay = (v) => {
 };
 const outOfOffice = (r) => { const d = toDay(r.out_of_office_until); return Boolean(d) && d >= today; };
 
-const base = { contact_id: lead.hubspot_contact_id || '', email: lead.email || '', name: lead.name || '', company: lead.company || '', country, employees, segment };
+// Every outcome carries a UTC timestamp, so the Assignments column never mixes UTC with the workflow's local time.
+const base = { contact_id: lead.hubspot_contact_id || '', email: lead.email || '', name: lead.name || '', company: lead.company || '', country, employees, segment, assigned_at: new Date().toISOString() };
 
 // Rule 1
 if (lead.current_owner_id) {
@@ -73,6 +74,5 @@ return [{
     changed: true,
     rule: `${rule} · round robin ${index + 1}/${pool.length}`,
     owner: { name: owner.name, email: owner.email, hubspot_owner_id: String(owner.hubspot_owner_id) },
-    assigned_at: new Date().toISOString(),
   },
 }];

@@ -2,7 +2,7 @@
 
 > Every website form submission becomes a clean HubSpot contact, a row in a tracking sheet and an email to the sales team, within seconds and without duplicates.
 
-**Status:** **run live on 2026-10-18** on a self-hosted n8n against a HubSpot free account, Google Sheets and Gmail SMTP (create, update and identical-resubmit paths). Code-node logic is also covered by 8 unit tests (`npm test`). The live run surfaced four bugs the unit tests could not catch; they are fixed and listed under [What the live run caught](#what-the-live-run-caught).
+**Status:** **run live on 2026-10-18** on a self-hosted n8n against a HubSpot free account, Google Sheets and Gmail SMTP (create, update and identical-resubmit paths). Code-node logic is also covered by 8 unit tests (`npm test`). The live runs surfaced problems the unit tests could not catch; they are fixed and listed under [What the live run caught](#what-the-live-run-caught).
 
 | Execution: new contact | Execution: returning contact |
 |---|---|
@@ -11,6 +11,10 @@
 | HubSpot contact | Leads sheet |
 |---|---|
 | ![HubSpot contact](../../docs/screenshots/01-hubspot-contact.png) | ![Leads sheet row](../../docs/screenshots/01-sheet-leads.png) |
+
+**Email to the sales inbox**
+
+![New lead email](../../docs/screenshots/01-email-new-lead.png)
 
 ---
 
@@ -142,6 +146,8 @@ Expected: `202 {"ok":true,"id":"S-..."}`, a contact `jane.doe@gmail.com` in HubS
 | A resubmission with identical data landed in `Failed Syncs` | The PATCH body was empty, and HubSpot answers `400 No properties found to update` | New IF node *Anything to Update?* skips the call when nothing changed |
 | The email said `message: set to "…"` although the contact already had that message | The search request did not ask HubSpot for the `message` property | Added `message` to the searched properties |
 | Phone `+14155550123` showed as `14155550123` in the sheet | Google Sheets' default input mode (`USER_ENTERED`) parses values like typed text, so a leading `+` turns into a number. The same mode would execute a visitor's `=HYPERLINK(…)` as a formula | Every Sheets write now uses `cellFormat: RAW` |
+| Some lead emails landed in the recipient's Spam folder | The From address differed from the Gmail account the SMTP credential logs in with, so Gmail rewrote the sender and distrusted the message | `FROM_EMAIL` must be the SMTP login account (or a verified alias of it) |
+| `Failed Syncs` rows had an empty `last_error_code` | n8n's HTTP Request error carries no `httpCode`; the status only appears in `error.cause.message` (`"400 - {...}"`) | The status is now read from `cause.message`; tests use the error object captured live |
 | New HubSpot accounts cannot create private apps | HubSpot replaced them with service keys | Setup docs now use a service key (same `hubspotAppToken` credential in n8n) |
 
 ## Estimated time saved

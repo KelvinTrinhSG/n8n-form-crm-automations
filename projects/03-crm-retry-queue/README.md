@@ -2,7 +2,23 @@
 
 > When HubSpot is down, rate-limits you, or the token expires, leads wait in a visible queue and are delivered automatically later, instead of disappearing into failed executions.
 
-**Status:** workflow built and importable; queue selection and retry classification covered by 6 unit tests. Not yet run against a live HubSpot account.
+**Status:** **run live on 2026-10-18** on its 15-minute schedule against a HubSpot free account and Google Sheets. Both outcomes were exercised: a row queued by project 01 was retried and `resolved`, and a row with an invalid email was classified as permanent, marked `dead` and escalated by email. Logic is also covered by 7 unit tests, one of them built from the error object captured in the live run.
+
+| Retry succeeded → `resolved` | HubSpot `400` → `dead` → ops email |
+|---|---|
+| ![Execution resolving a queued lead](../../docs/screenshots/03-execution-resolved.png) | ![Execution marking a row dead and escalating](../../docs/screenshots/03-execution-dead.png) |
+
+**The queue after both runs** (`Failed Syncs` tab)
+
+![Failed Syncs tab](../../docs/screenshots/03-sheet-failed-syncs.png)
+
+**Escalation email**
+
+![Ops email](../../docs/screenshots/03-email-ops.png)
+
+### What the live run caught
+
+The first run classified HubSpot's `400 INVALID_EMAIL` as *temporary* and scheduled retries for the next eight hours. n8n's HTTP Request error item has **no `httpCode` field**; the status code only appears in `error.cause.message` (`"400 - {...}"`). The original unit tests had assumed an `httpCode` field, so they passed against data that never occurs. The code now reads the status from `cause.message` (same fix in project 01 and 10a), and the test uses the real error object. The next scheduled run marked the row `dead` and sent the email above.
 
 ---
 
