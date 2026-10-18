@@ -24,7 +24,21 @@ const segment = employees >= ENTERPRISE_MIN_EMPLOYEES ? 'enterprise' : 'smb';
 const yes = (v) => ['true', 'yes', '1', 'y', 'x'].includes(String(v).trim().toLowerCase());
 const list = (v) => String(v || '').split(/[,;]/).map((s) => s.trim().toUpperCase()).filter(Boolean);
 const today = new Date().toISOString().slice(0, 10);
-const outOfOffice = (r) => r.out_of_office_until && String(r.out_of_office_until).slice(0, 10) >= today;
+// Google Sheets turns a typed "2026-10-24" into a date shown as "10/24/2026" (US locale), or a serial number
+// when read unformatted. Normalise all three to YYYY-MM-DD before comparing. Seen live on 2026-10-18.
+const pad = (n) => String(n).padStart(2, '0');
+const toDay = (v) => {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${pad(m[2])}-${pad(m[3])}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // sheet locale is US: month/day/year
+  if (m) return `${m[3]}-${pad(m[1])}-${pad(m[2])}`;
+  if (/^\d{5}(\.\d+)?$/.test(s)) return new Date(Date.UTC(1899, 11, 30) + Number(s) * 86400000).toISOString().slice(0, 10);
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : '';
+};
+const outOfOffice = (r) => { const d = toDay(r.out_of_office_until); return Boolean(d) && d >= today; };
 
 const base = { contact_id: lead.hubspot_contact_id || '', email: lead.email || '', name: lead.name || '', company: lead.company || '', country, employees, segment };
 

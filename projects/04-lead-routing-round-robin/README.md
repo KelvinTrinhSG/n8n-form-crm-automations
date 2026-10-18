@@ -61,6 +61,7 @@ flowchart LR
 | Choose Owner | Code | [`choose-owner.js`](src/choose-owner.js): rules + round-robin pointer in static data |
 | Build Emails | Code | [`build-emails.js`](src/build-emails.js) |
 | Owner Assigned? | IF | |
+| Owner Changed? | IF | Existing owner kept → skip the HubSpot call; the rep gets a "your contact got back in touch" email instead of "new lead" |
 | HubSpot · Set Contact Owner | HTTP Request | `PATCH /crm/v3/objects/contacts/{id}` with `hubspot_owner_id` |
 | Log Assignment | Google Sheets | Append to `Assignments` |
 | Email Assigned Rep / Email Sales Manager | SMTP | |

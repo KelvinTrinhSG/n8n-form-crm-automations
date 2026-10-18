@@ -6,6 +6,17 @@ const details = `<p><b>${esc(who)}</b>${r.company ? ` · ${esc(r.company)}` : ''
   + `Country: ${esc(r.country || '?')} · Employees: ${esc(r.employees || '?')} · Segment: ${esc(r.segment)}<br>`
   + `HubSpot contact: ${esc(r.contact_id)}</p>`;
 
+// Existing owner kept: this is their contact getting back in touch, not a new lead.
+if (r.assigned && !r.changed) {
+  return [{
+    json: {
+      ...r,
+      email_to: r.owner.email,
+      email_subject: `Your contact got back in touch: ${who}${r.company ? ` (${r.company})` : ''}`,
+      email_html: `<p>Hi ${esc(String(r.owner.name).split(' ')[0])}, someone you already own in HubSpot just contacted us again. No reassignment was made.</p>${details}<p style="color:#666">Rule: ${esc(r.rule)}</p>`,
+    },
+  }];
+}
 if (r.assigned) {
   return [{
     json: {

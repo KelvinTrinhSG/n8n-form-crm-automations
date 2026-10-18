@@ -42,6 +42,23 @@ test('400 is dead immediately and escalated', async () => {
   assert.equal(out.escalate, true);
 });
 
+// Error item exactly as n8n's HTTP Request node emitted it on 2026-10-18 (no httpCode field).
+const liveInvalidEmail = {
+  message: 'Bad request - please check your parameters',
+  name: 'NodeApiError',
+  description: 'Property values were not valid: [{"isValid":false,"message":"Email address bad is invalid","error":"INVALID_EMAIL","name":"email"}]',
+  context: {},
+  cause: { name: 'AxiosError', message: '400 - "{\\"status\\":\\"error\\",\\"category\\":\\"VALIDATION_ERROR\\"}"' },
+};
+
+test('live n8n error shape: status code is read from cause.message', async () => {
+  const [out] = await fail(liveInvalidEmail, 0);
+  assert.equal(out.last_error_code, '400');
+  assert.equal(out.error_kind, 'permanent');
+  assert.equal(out.status, 'dead');
+  assert.equal(out.escalate, true);
+});
+
 test('401 keeps retrying but escalates on the first failure only', async () => {
   const [first] = await fail({ message: 'Authentication credentials not found', httpCode: '401' }, 0);
   assert.equal(first.status, 'pending');

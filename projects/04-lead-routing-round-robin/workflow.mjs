@@ -13,6 +13,7 @@ const n = {
   choose: note(code('Choose Owner', 'choose-owner.js'), 'Keep owner → segment → territory → round robin'),
   emails: note(code('Build Emails', 'build-emails.js'), 'Rep or manager message'),
   assigned: note(ifTrue('Owner Assigned?', '={{ $json.assigned }}'), 'Someone available?'),
+  changed: note(ifTrue('Owner Changed?', '={{ $json.changed }}'), 'Existing owner kept → no HubSpot call'),
   setOwner: note(hubspot('HubSpot · Set Contact Owner', 'PATCH', '/crm/v3/objects/contacts/{{ $json.contact_id }}',
     '={{ JSON.stringify({ properties: { hubspot_owner_id: $json.owner.hubspot_owner_id } }) }}', { onError: 'stopWorkflow' }), 'hubspot_owner_id'),
   log: note(sheetsWrite('Log Assignment', 'Assignments', {
@@ -31,7 +32,9 @@ const n = {
 
 const { c, connect, chain } = connections();
 chain(n.hook, n.reps, n.choose, n.emails, n.assigned);
-connect(n.assigned, n.setOwner, 0);
+connect(n.assigned, n.changed, 0);
+connect(n.changed, n.setOwner, 0);
+connect(n.changed, n.log, 1);
 chain(n.setOwner, n.log, n.mailRep, n.okResp);
 connect(n.assigned, n.mailMgr, 1);
 connect(n.mailMgr, n.noResp);
@@ -64,7 +67,7 @@ Project 01 (after the contact is created) or any system: POST \`{hubspot_contact
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Lead details from 01 or any caller.', nodes: [n.hook] },
       { title: '② Decide owner', color: COLOR.orange, body: 'Rules from the Sales Reps sheet.', nodes: [n.reps, n.choose, n.emails, n.assigned] },
-      { title: '③ Assign & notify', color: COLOR.blue, body: 'Owner in HubSpot, audit row, rep email.', nodes: [[n.setOwner, n.mailMgr], [n.log, n.noResp], n.mailRep, n.okResp] },
+      { title: '③ Assign & notify', color: COLOR.blue, body: 'Owner in HubSpot, audit row, rep email.', nodes: [[n.changed, n.mailMgr], [n.setOwner, n.noResp], n.log, n.mailRep, n.okResp] },
     ],
   }),
 }];

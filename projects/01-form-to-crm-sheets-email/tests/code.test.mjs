@@ -89,3 +89,16 @@ test('failed sync keeps the payload even when the search step failed', async () 
   assert.equal(row.stage, 'HubSpot · Find Contact');
   assert.equal(JSON.parse(row.payload).email, lead.email);
 });
+
+test('failed sync reads the status code from the live n8n error shape (cause.message)', async () => {
+  const [row] = await runCode(src('prepare-failed-sync.js'), {
+    items: [{ error: {
+      message: 'Bad request - please check your parameters',
+      description: 'No properties found to update, please provide at least one.',
+      cause: { name: 'AxiosError', message: '400 - "{\\"status\\":\\"error\\",\\"category\\":\\"VALIDATION_ERROR\\"}"' },
+    } }],
+    nodes: { 'Normalize & Validate': [{ lead }] },
+    prevNode: 'HubSpot · Update Contact',
+  });
+  assert.equal(row.last_error_code, '400');
+});

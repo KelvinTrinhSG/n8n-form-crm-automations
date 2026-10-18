@@ -37,10 +37,26 @@ test('UK lead falls back to the global pool while the UK rep is out of office', 
   assert.match(out.rule, /global pool/);
 });
 
+test('out-of-office date works in the formats Google Sheets returns (US date, serial number)', async () => {
+  const [y, m, d] = tomorrow.split('-');
+  const serial = String(Math.round((Date.parse(tomorrow) - Date.UTC(1899, 11, 30)) / 86400000));
+  for (const value of [`${Number(m)}/${Number(d)}/${y}`, serial]) {
+    const withDate = reps.map((r) => (r.name === 'Chloe' ? { ...r, out_of_office_until: value } : r));
+    const [out] = await runCode(src('choose-owner.js'), { items: withDate, nodes: { 'Route Lead Webhook': [{ body: { email: 'a@shop.co.uk', country: 'UK' } }] } });
+    assert.equal(out.owner.email, 'eva@example.com', `Chloe must be skipped when the date reads "${value}"`);
+  }
+  const back = reps.map((r) => (r.name === 'Chloe' ? { ...r, out_of_office_until: '1/2/2020' } : r));
+  const [out] = await runCode(src('choose-owner.js'), { items: back, nodes: { 'Route Lead Webhook': [{ body: { email: 'a@shop.co.uk', country: 'UK' } }] } });
+  assert.equal(out.owner.email, 'chloe@example.com');
+});
+
 test('existing HubSpot owner is never replaced', async () => {
   const [out] = await route({ email: 'x@y.com', country: 'US', current_owner_id: '51004' });
   assert.equal(out.changed, false);
   assert.equal(out.owner.name, 'Daniel');
+  const [mail] = await runCode(src('build-emails.js'), { nodes: { 'Choose Owner': [out] } });
+  assert.match(mail.email_subject, /^Your contact got back in touch/);
+  assert.equal(mail.email_to, 'daniel@example.com');
 });
 
 test('no match → unassigned, and the manager gets the email', async () => {

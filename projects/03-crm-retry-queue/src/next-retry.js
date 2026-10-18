@@ -10,7 +10,11 @@ const MAX_DELAY_MIN = 6 * 60;
 const row = $('Pick Due Retries').item.json;
 const err = typeof $json.error === 'object' && $json.error ? $json.error : { message: $json.error || $json.message || 'unknown error' };
 const message = String(err.description || err.message || '').slice(0, 500);
-const code = Number(err.httpCode || err.status || (message.match(/\b([45]\d\d)\b/) || [])[1]) || 0;
+// n8n's HTTP Request error has no httpCode field: the status only appears in cause.message ("400 - {...}").
+// Seen live on 2026-10-18; httpCode/status are kept for other node versions.
+const causeMessage = String((err.cause && err.cause.message) || '');
+const code = Number(err.httpCode || err.status || (causeMessage.match(/^([1-5]\d\d)\b/) || [])[1]
+  || (`${err.message || ''} ${message}`.match(/\b([45]\d\d)\b/) || [])[1]) || 0;
 
 const attempts = row.attempts + 1;
 let kind = 'temporary';

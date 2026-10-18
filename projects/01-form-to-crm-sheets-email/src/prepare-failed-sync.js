@@ -17,7 +17,10 @@ try {
 }
 
 const now = new Date();
-const code = String(err.httpCode || err.status || (String(err.message || '').match(/\b([45]\d\d)\b/) || [])[1] || '');
+// n8n's HTTP Request error has no httpCode field: the status only appears in cause.message ("400 - {...}").
+const causeMessage = String((err.cause && err.cause.message) || '');
+const code = String(err.httpCode || err.status || (causeMessage.match(/^([1-5]\d\d)\b/) || [])[1]
+  || (`${err.message || ''} ${err.description || ''}`.match(/\b([45]\d\d)\b/) || [])[1] || '');
 
 return [{
   json: {

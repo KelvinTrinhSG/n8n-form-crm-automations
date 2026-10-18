@@ -9,7 +9,8 @@ const err = exec.error || trig.error || {};
 const wf = d.workflow || {};
 const node = exec.lastNodeExecuted || (trig.error ? 'Trigger' : 'unknown');
 const message = String(err.description || err.message || 'Unknown error');
-const text = `${err.name || ''} ${err.message || ''} ${err.description || ''} ${err.httpCode || ''}`;
+// cause.message carries the HTTP status ("400 - {...}") for HTTP Request errors; n8n sets no httpCode there.
+const text = `${err.name || ''} ${err.message || ''} ${err.description || ''} ${err.httpCode || ''} ${(err.cause && err.cause.message) || ''}`;
 
 const RULES = [
   { category: 'auth', severity: 'high', re: /\b(401|403)\b|unauthori[sz]ed|authori[sz]ation failed|forbidden|invalid[_ ]grant|invalid (api )?key|token (has )?expired|authentication|credentials? (not found|invalid)/i,
