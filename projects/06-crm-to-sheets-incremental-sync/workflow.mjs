@@ -65,7 +65,7 @@ Managers and finance want CRM data in a spreadsheet for pivots and Looker Studio
 Two-way sync needs conflict rules (who wins if both changed?). HubSpot stays the source of truth; the sheet is read-only reporting.
 
 ### Setup
-- 🔑 **HubSpot App Token** (\`crm.objects.contacts.read\`), **Google Sheets**`,
+- 🔑 **HubSpot Service Key** (\`crm.objects.contacts.read\`), **Google Sheets**`,
     stages: [
       { title: '① Schedule', color: COLOR.green, body: 'Hourly.', nodes: [n.cron] },
       { title: '② Where did we stop?', color: COLOR.orange, body: 'Cursor from the Sync State tab.', nodes: [n.state, n.build] },

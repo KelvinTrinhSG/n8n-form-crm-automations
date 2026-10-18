@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# ⏱️ 05 · Speed-to-Lead SLA\n**No lead waits more than an hour of business time without someone noticing.**\n\n### Problem it solves\nLeads contacted within the first hour convert far better, but nobody watches the clock. A manager finds out on Friday that Tuesday's demo request was never called.\n\n### Rules\n| Business time without contact | Action |\n|---|---|\n| 60 min | Reminder to the **owner** |\n| 240 min | Escalation to the **sales manager** |\n| No owner | Straight to the manager |\n\n### Why check HubSpot first\nThe sheet does not know about calls. The workflow reads `hs_last_sales_activity_timestamp`, `notes_last_contacted` and `hs_lead_status`. If the rep already acted, the lead is marked **met** and nobody is bothered.\n\n### Business hours\nMon–Fri 9:00–18:00 ET, holidays excluded, DST-safe.\n\n### No duplicate alerts\n`sla_level` in the Leads tab records the last alert sent. **01** resets it when the person submits again.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token** (`crm.objects.contacts.read`), **SMTP**",
+        "content": "# ⏱️ 05 · Speed-to-Lead SLA\n**No lead waits more than an hour of business time without someone noticing.**\n\n### Problem it solves\nLeads contacted within the first hour convert far better, but nobody watches the clock. A manager finds out on Friday that Tuesday's demo request was never called.\n\n### Rules\n| Business time without contact | Action |\n|---|---|\n| 60 min | Reminder to the **owner** |\n| 240 min | Escalation to the **sales manager** |\n| No owner | Straight to the manager |\n\n### Why check HubSpot first\nThe sheet does not know about calls. The workflow reads `hs_last_sales_activity_timestamp`, `notes_last_contacted` and `hs_lead_status`. If the rep already acted, the lead is marked **met** and nobody is bothered.\n\n### Business hours\nMon–Fri 9:00–18:00 ET, holidays excluded, DST-safe.\n\n### No duplicate alerts\n`sla_level` in the Leads tab records the last alert sent. **01** resets it when the person submits again.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot Service Key** (`crm.objects.contacts.read`), **SMTP**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -275,7 +275,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Never alert twice for one level",
       "notesInFlow": true

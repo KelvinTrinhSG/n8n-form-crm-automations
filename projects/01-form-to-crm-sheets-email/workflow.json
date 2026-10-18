@@ -61,7 +61,7 @@
       "parameters": {
         "content": "## ③ CRM create / update\nSearch → decide → write.\nRed outputs = failed after retries.",
         "color": 6,
-        "width": 960,
+        "width": 1200,
         "height": 580
       }
     },
@@ -71,7 +71,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2040,
+        2280,
         150
       ],
       "parameters": {
@@ -87,7 +87,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        3040,
+        3280,
         150
       ],
       "parameters": {
@@ -221,7 +221,7 @@
         "nodeCredentialType": "hubspotAppToken",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $json.lead.email }] }],\n  properties: ['email', 'firstname', 'lastname', 'company', 'website', 'phone', 'jobtitle', 'lifecyclestage', 'hubspot_owner_id'],\n  limit: 1\n}) }}",
+        "jsonBody": "={{ JSON.stringify({\n  filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $json.lead.email }] }],\n  properties: ['email', 'firstname', 'lastname', 'company', 'website', 'phone', 'jobtitle', 'message', 'lifecyclestage', 'hubspot_owner_id'],\n  limit: 1\n}) }}",
         "options": {
           "timeout": 30000
         }
@@ -285,31 +285,39 @@
       "notesInFlow": true
     },
     {
-      "id": "hubspot-update-contact",
-      "name": "HubSpot · Update Contact",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "id": "anything-to-update",
+      "name": "Anything to Update?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
       "position": [
         1830,
         300
       ],
       "parameters": {
-        "method": "PATCH",
-        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contact_id }}",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "hubspotAppToken",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ properties: $json.properties }) }}",
-        "options": {
-          "timeout": 30000
-        }
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "object-keys-json-properties-length-0-true",
+              "leftValue": "={{ Object.keys($json.properties).length > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
-      "retryOnFail": true,
-      "maxTries": 3,
-      "waitBetweenTries": 3000,
-      "onError": "continueErrorOutput",
-      "notes": "PATCH changed fields only",
+      "notes": "Identical resubmit → skip PATCH",
       "notesInFlow": true
     },
     {
@@ -341,12 +349,40 @@
       "notesInFlow": true
     },
     {
+      "id": "hubspot-update-contact",
+      "name": "HubSpot · Update Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2070,
+        400
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.hubapi.com/crm/v3/objects/contacts/{{ $json.contact_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "hubspotAppToken",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ properties: $json.properties }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueErrorOutput",
+      "notes": "PATCH changed fields only",
+      "notesInFlow": true
+    },
+    {
       "id": "collect-crm-result",
       "name": "Collect CRM Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2110,
+        2350,
         400
       ],
       "parameters": {
@@ -361,7 +397,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2350,
+        2590,
         400
       ],
       "parameters": {
@@ -606,7 +642,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Leads\" · key = email",
       "notesInFlow": true
@@ -617,7 +655,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2590,
+        2830,
         400
       ],
       "parameters": {
@@ -632,7 +670,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        2830,
+        3070,
         400
       ],
       "parameters": {
@@ -654,7 +692,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3110,
+        3350,
         400
       ],
       "parameters": {
@@ -669,7 +707,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        3350,
+        3590,
         400
       ],
       "parameters": {
@@ -822,7 +860,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Failed Syncs\" → project 03",
       "notesInFlow": true
@@ -913,7 +953,7 @@
       "main": [
         [
           {
-            "node": "HubSpot · Update Contact",
+            "node": "Anything to Update?",
             "type": "main",
             "index": 0
           }
@@ -921,6 +961,24 @@
         [
           {
             "node": "HubSpot · Create Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to Update?": {
+      "main": [
+        [
+          {
+            "node": "HubSpot · Update Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect CRM Result",
             "type": "main",
             "index": 0
           }

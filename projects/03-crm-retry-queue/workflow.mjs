@@ -59,7 +59,7 @@ A lead that fails to sync usually ends up as a red execution nobody opens. Someo
 Edit the payload in the sheet, set status back to \`pending\`. The next run picks it up.
 
 ### Setup
-- 🔑 **Google Sheets**, **HubSpot App Token**, **SMTP**`,
+- 🔑 **Google Sheets**, **HubSpot Service Key**, **SMTP**`,
     stages: [
       { title: '① Schedule', color: COLOR.green, body: 'Every 15 minutes.', nodes: [n.cron] },
       { title: '② Load due work', color: COLOR.purple, body: 'Read queue, pick due rows.', nodes: [n.read, n.pick] },

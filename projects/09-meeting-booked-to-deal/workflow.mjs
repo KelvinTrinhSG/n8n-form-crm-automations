@@ -85,7 +85,7 @@ A prospect books a demo in Calendly. The rep has to create the contact and the d
 
 ### Setup
 - Env: \`CALENDLY_SIGNING_KEY\`, \`NODE_FUNCTION_ALLOW_BUILTIN=crypto\`, \`N8N_BLOCK_ENV_ACCESS_IN_NODE=false\`
-- 🔑 **HubSpot App Token** (contacts + deals write), **Google Sheets**, **SMTP**
+- 🔑 **HubSpot Service Key** (contacts + deals write), **Google Sheets**, **SMTP**
 - Calendly webhook subscription (API): events \`invitee.created\`, \`invitee.canceled\``,
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Verify first, ack fast.', nodes: [n.hook, n.verify, n.valid, [n.r200, n.r401], n.kind] },

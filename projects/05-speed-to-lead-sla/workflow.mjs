@@ -54,7 +54,7 @@ Mon–Fri 9:00–18:00 ET, holidays excluded, DST-safe.
 \`sla_level\` in the Leads tab records the last alert sent. **01** resets it when the person submits again.
 
 ### Setup
-- 🔑 **Google Sheets**, **HubSpot App Token** (\`crm.objects.contacts.read\`), **SMTP**`,
+- 🔑 **Google Sheets**, **HubSpot Service Key** (\`crm.objects.contacts.read\`), **SMTP**`,
     stages: [
       { title: '① Schedule', color: COLOR.green, body: 'Business hours only.', nodes: [n.cron] },
       { title: '② Find overdue leads', color: COLOR.orange, body: 'Sheet → business-minute clock.', nodes: [n.leads, n.find] },

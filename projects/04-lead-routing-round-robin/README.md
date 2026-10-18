@@ -75,7 +75,7 @@ flowchart LR
 
 ## Setup
 
-1. Credentials: **Google Sheets**, **HubSpot App Token** (`crm.objects.contacts.write`), **SMTP**.
+1. Credentials: **Google Sheets**, **HubSpot Service Key** (`crm.objects.contacts.write`), **SMTP**.
 2. Create the `Sales Reps` tab from [`samples/Sales Reps.csv`](samples/Sales%20Reps.csv) and fill in real owner IDs (HubSpot → Settings → Users & Teams, or `GET /crm/v3/owners`). Create `Assignments`.
 3. Call it from project 01: add an HTTP Request after *Collect CRM Result* → `POST /webhook/route-lead`. Or call it from HubSpot (workflow webhook action), Zapier, anything that can POST.
 

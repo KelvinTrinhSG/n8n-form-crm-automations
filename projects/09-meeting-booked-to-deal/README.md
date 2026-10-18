@@ -78,7 +78,7 @@ flowchart LR
 ## Setup
 
 1. Env vars: `CALENDLY_SIGNING_KEY`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`.
-2. Credentials: **HubSpot App Token** (contacts + deals write), **Google Sheets**, **SMTP**.
+2. Credentials: **HubSpot Service Key** (contacts + deals write), **Google Sheets**, **SMTP**.
 3. Tab `Meetings`.
 4. Create the Calendly webhook subscription (requires a paid Calendly plan and a personal access token):
 

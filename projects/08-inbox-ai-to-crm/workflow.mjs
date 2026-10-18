@@ -61,7 +61,7 @@ Not every lead uses the form. Someone reads the shared inbox, decides what is a 
 - HubSpot failure → review row, the email is not lost
 
 ### Setup
-- 🔑 **IMAP** (Gmail: App Password, imap.gmail.com:993), **OpenAI**, **HubSpot App Token** (+ \`crm.objects.contacts.write\`), **Google Sheets**
+- 🔑 **IMAP** (Gmail: App Password, imap.gmail.com:993), **OpenAI**, **HubSpot Service Key** (+ \`crm.objects.contacts.write\`), **Google Sheets**
 - Edit \`OWN_DOMAINS\` in *Pre-filter Email*`,
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Shared inbox over IMAP.', nodes: [n.imap] },

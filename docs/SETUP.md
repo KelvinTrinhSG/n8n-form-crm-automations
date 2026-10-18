@@ -26,7 +26,7 @@ Restart n8n after changing them. If you cannot change env vars (some n8n Cloud p
 
 | Credential | Used by | How |
 |---|---|---|
-| **HubSpot App Token** | 01, 03–09 | HubSpot → Settings → Integrations → **Private apps** → create. Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`. Copy the access token |
+| **HubSpot Service Key** | 01, 03–09 | HubSpot → **Development** → **Keys** → create a **service key** (new accounts can no longer create legacy private apps; an existing private app token works the same way). Scopes: `crm.objects.contacts.read`, `crm.objects.contacts.write`, `crm.objects.deals.read`, `crm.objects.deals.write`. Paste it into n8n's *HubSpot Service Key* credential (internal type `hubspotAppToken`) |
 | **Google Sheets OAuth2** | all | Google Cloud project → enable Sheets API + Drive API → OAuth client (Web) with the redirect URL shown by n8n |
 | **SMTP** | 01, 03, 04, 05, 07, 09, 10 | Gmail: `smtp.gmail.com`, port 465, SSL, an **App Password** |
 | **IMAP** | 08 | Gmail: `imap.gmail.com`, port 993, SSL, same App Password |

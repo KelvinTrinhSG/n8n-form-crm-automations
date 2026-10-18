@@ -71,7 +71,7 @@ All Code nodes run **per item** and reference earlier nodes with `.item`, so sev
 
 ## Setup
 
-1. Credentials: **IMAP** (Gmail: enable IMAP, App Password, `imap.gmail.com:993`), **OpenAI**, **HubSpot App Token** (`crm.objects.contacts.write`; notes use the same scope), **Google Sheets**.
+1. Credentials: **IMAP** (Gmail: enable IMAP, App Password, `imap.gmail.com:993`), **OpenAI**, **HubSpot Service Key** (`crm.objects.contacts.write`; notes use the same scope), **Google Sheets**.
 2. Edit `OWN_DOMAINS` in `prefilter.js`.
 3. Tab `Email Triage`.
 4. Use a **dedicated** inbox or Gmail label. The trigger marks processed mail as read, which would confuse people working the same inbox by hand.

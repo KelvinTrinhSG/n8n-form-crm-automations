@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# 📧 08 · Inbox → AI → CRM\n**Leads that arrive by plain email (info@, sales@) become HubSpot contacts with the email on their timeline.**\n\n### Problem it solves\nNot every lead uses the form. Someone reads the shared inbox, decides what is a real inquiry, retypes the name and company into HubSpot and pastes the email as a note. **≈ 4 min per email**, and inquiries get buried under newsletters.\n\n### Flow\n1. IMAP trigger on new (unseen) mail\n2. **Rules first**: skip auto-replies, bounces, newsletters, replies, internal mail\n3. **AI** classifies intent + extracts name, company, phone\n4. **Code validates** the AI output\n5. Sales inquiry / partnership, confidence ≥ 0.6 → HubSpot contact + **note**\n6. Everything else → **Email Triage** tab for a human\n\n### Safety\n- Email is wrapped as data; instructions inside it are ignored\n- Identity = header sender, never AI output\n- AI failure → `needs_review`, not auto-created\n- HubSpot failure → review row, the email is not lost\n\n### Setup\n- 🔑 **IMAP** (Gmail: App Password, imap.gmail.com:993), **OpenAI**, **HubSpot App Token** (+ `crm.objects.contacts.write`), **Google Sheets**\n- Edit `OWN_DOMAINS` in *Pre-filter Email*",
+        "content": "# 📧 08 · Inbox → AI → CRM\n**Leads that arrive by plain email (info@, sales@) become HubSpot contacts with the email on their timeline.**\n\n### Problem it solves\nNot every lead uses the form. Someone reads the shared inbox, decides what is a real inquiry, retypes the name and company into HubSpot and pastes the email as a note. **≈ 4 min per email**, and inquiries get buried under newsletters.\n\n### Flow\n1. IMAP trigger on new (unseen) mail\n2. **Rules first**: skip auto-replies, bounces, newsletters, replies, internal mail\n3. **AI** classifies intent + extracts name, company, phone\n4. **Code validates** the AI output\n5. Sales inquiry / partnership, confidence ≥ 0.6 → HubSpot contact + **note**\n6. Everything else → **Email Triage** tab for a human\n\n### Safety\n- Email is wrapped as data; instructions inside it are ignored\n- Identity = header sender, never AI output\n- AI failure → `needs_review`, not auto-created\n- HubSpot failure → review row, the email is not lost\n\n### Setup\n- 🔑 **IMAP** (Gmail: App Password, imap.gmail.com:993), **OpenAI**, **HubSpot Service Key** (+ `crm.objects.contacts.write`), **Google Sheets**\n- Edit `OWN_DOMAINS` in *Pre-filter Email*",
         "color": 1,
         "width": 460,
         "height": 640
@@ -493,7 +493,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Email Triage\"",
       "notesInFlow": true

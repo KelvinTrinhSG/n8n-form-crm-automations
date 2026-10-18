@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# 🧭 04 · Lead Routing\n**Every new lead gets the right owner in HubSpot within seconds, and the rep gets an email.**\n\n### Problem it solves\nA manager assigns leads by hand from a shared inbox. Leads wait until someone is free, some reps get more than others, and nobody notices when a rep is on holiday.\n\n### Rules (in order)\n1. Already has an owner → **keep it**\n2. **Segment**: 500+ employees → enterprise reps\n3. **Territory**: country-specific reps before `*` reps\n4. Skip **inactive** and **out-of-office** reps\n5. **Round robin** inside the pool\n\n### Rules live in a sheet\nThe manager edits tab **Sales Reps** (active, territories, segments, out_of_office_until). No workflow change needed.\n\n### Called by\nProject 01 (after the contact is created) or any system: POST `{hubspot_contact_id, email, name, company, country, employees, current_owner_id}`.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token** (scope `crm.objects.contacts.write`), **SMTP**",
+        "content": "# 🧭 04 · Lead Routing\n**Every new lead gets the right owner in HubSpot within seconds, and the rep gets an email.**\n\n### Problem it solves\nA manager assigns leads by hand from a shared inbox. Leads wait until someone is free, some reps get more than others, and nobody notices when a rep is on holiday.\n\n### Rules (in order)\n1. Already has an owner → **keep it**\n2. **Segment**: 500+ employees → enterprise reps\n3. **Territory**: country-specific reps before `*` reps\n4. Skip **inactive** and **out-of-office** reps\n5. **Round robin** inside the pool\n\n### Rules live in a sheet\nThe manager edits tab **Sales Reps** (active, territories, segments, out_of_office_until). No workflow change needed.\n\n### Called by\nProject 01 (after the contact is created) or any system: POST `{hubspot_contact_id, email, name, company, country, employees, current_owner_id}`.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot Service Key** (scope `crm.objects.contacts.write`), **SMTP**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -345,7 +345,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Assignments\" · audit trail",
       "notesInFlow": true

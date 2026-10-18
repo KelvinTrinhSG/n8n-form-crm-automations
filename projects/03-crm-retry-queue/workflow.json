@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# 🔁 03 · CRM Retry Queue\n**When HubSpot is down or the token expires, leads wait in a queue instead of disappearing.**\n\n### Problem it solves\nA lead that fails to sync usually ends up as a red execution nobody opens. Someone notices days later that the CRM is missing contacts, then replays them by hand.\n\n### How it works\n- **01** writes failed leads to the **Failed Syncs** tab (status `pending`)\n- Every 15 min this worker retries the due rows (max 50)\n- Success → `resolved` + HubSpot ID\n- Failure → classified:\n  - 400/404/422 → `dead` now (data problem)\n  - 401/403 → retry + email ops once (token problem)\n  - 429/5xx/timeout → backoff 15m → 30m → 1h → 2h → 4h\n- After 6 attempts → `dead` + email ops\n\n### Manual fix\nEdit the payload in the sheet, set status back to `pending`. The next run picks it up.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot App Token**, **SMTP**",
+        "content": "# 🔁 03 · CRM Retry Queue\n**When HubSpot is down or the token expires, leads wait in a queue instead of disappearing.**\n\n### Problem it solves\nA lead that fails to sync usually ends up as a red execution nobody opens. Someone notices days later that the CRM is missing contacts, then replays them by hand.\n\n### How it works\n- **01** writes failed leads to the **Failed Syncs** tab (status `pending`)\n- Every 15 min this worker retries the due rows (max 50)\n- Success → `resolved` + HubSpot ID\n- Failure → classified:\n  - 400/404/422 → `dead` now (data problem)\n  - 401/403 → retry + email ops once (token problem)\n  - 429/5xx/timeout → backoff 15m → 30m → 1h → 2h → 4h\n- After 6 attempts → `dead` + email ops\n\n### Manual fix\nEdit the payload in the sheet, set status back to `pending`. The next run picks it up.\n\n### Setup\n- 🔑 **Google Sheets**, **HubSpot Service Key**, **SMTP**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -321,7 +321,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Match on queue_id",
       "notesInFlow": true
@@ -417,7 +419,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Match on queue_id",
       "notesInFlow": true

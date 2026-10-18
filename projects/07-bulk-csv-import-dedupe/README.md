@@ -81,7 +81,7 @@ Report: *3 contacts imported, 1 duplicate merged, 2 need attention.*
 
 ## Setup
 
-1. Credentials: **HubSpot App Token** (`crm.objects.contacts.write`), **Google Sheets**, **SMTP**.
+1. Credentials: **HubSpot Service Key** (`crm.objects.contacts.write`), **Google Sheets**, **SMTP**.
 2. Tab `Import Rejects`.
 3. Share the form URL (`/form/import-leads`) with the marketing team only. For a public n8n instance, put it behind basic auth (Form Trigger → Authentication).
 4. Extra columns (e.g. `industry`): add an alias in `ALIASES` and make sure the HubSpot property exists.

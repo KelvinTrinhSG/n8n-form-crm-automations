@@ -62,7 +62,7 @@ One duplicated email inside a batch makes HubSpot reject **the whole batch**.
 A failed batch (after 3 retries) is listed email by email in the report. Partial errors (207) are reported too.
 
 ### Setup
-- 🔑 **HubSpot App Token**, **Google Sheets**, **SMTP**`,
+- 🔑 **HubSpot Service Key**, **Google Sheets**, **SMTP**`,
     stages: [
       { title: '① Upload', color: COLOR.green, body: 'n8n form with a file field.', nodes: [n.form] },
       { title: '② Clean', color: COLOR.orange, body: 'Parse, map, validate, dedupe, batch.', nodes: [n.parse, n.clean, n.any] },

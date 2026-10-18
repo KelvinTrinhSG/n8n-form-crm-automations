@@ -2,7 +2,15 @@
 
 > Every website form submission becomes a clean HubSpot contact, a row in a tracking sheet and an email to the sales team, within seconds and without duplicates.
 
-**Status:** workflow built and importable; Code-node logic covered by 8 unit tests with sample payloads (`npm test`). Not yet run against a live HubSpot account.
+**Status:** **run live on 2026-10-18** on a self-hosted n8n against a HubSpot free account, Google Sheets and Gmail SMTP (create, update and identical-resubmit paths). Code-node logic is also covered by 8 unit tests (`npm test`). The live run surfaced four bugs the unit tests could not catch; they are fixed and listed under [What the live run caught](#what-the-live-run-caught).
+
+| Execution: new contact | Execution: returning contact |
+|---|---|
+| ![Execution creating a contact](../../docs/screenshots/01-execution-create.png) | ![Execution updating a contact](../../docs/screenshots/01-execution-update.png) |
+
+| HubSpot contact | Leads sheet |
+|---|---|
+| ![HubSpot contact](../../docs/screenshots/01-hubspot-contact.png) | ![Leads sheet row](../../docs/screenshots/01-sheet-leads.png) |
 
 ---
 
@@ -71,6 +79,7 @@ These rules are written down because "update the CRM" means different things to 
 | HubSpot · Find Contact | HTTP Request | `POST /crm/v3/objects/contacts/search`, filter `email EQ` |
 | Build CRM Payload | Code | [`build-crm-payload.js`](src/build-crm-payload.js) |
 | Contact Exists? | IF | `action === 'update'` |
+| Anything to Update? | IF | Skips the PATCH when nothing changed: HubSpot rejects an empty update with `400` |
 | HubSpot · Update Contact | HTTP Request | `PATCH /crm/v3/objects/contacts/{id}` |
 | HubSpot · Create Contact | HTTP Request | `POST /crm/v3/objects/contacts/batch/upsert`, `idProperty: email` |
 | Collect CRM Result | Code | [`collect-result.js`](src/collect-result.js): handles both response shapes |
@@ -110,7 +119,7 @@ All HubSpot nodes: **3 retries, 3 s apart**, then the item leaves through the re
 
 ## Setup
 
-1. Credentials: **HubSpot App Token** on the three HubSpot nodes, **Google Sheets** on the two Sheets nodes, **SMTP** on *Email Sales Team* (see [`docs/SETUP.md`](../../docs/SETUP.md)).
+1. Credentials: **HubSpot Service Key** on the three HubSpot nodes, **Google Sheets** on the two Sheets nodes, **SMTP** on *Email Sales Team* (see [`docs/SETUP.md`](../../docs/SETUP.md)).
 2. Sheet tabs `Leads` and `Failed Syncs` with the columns listed in SETUP.
 3. Point your form's webhook / "POST to URL" action at `https://<your-n8n>/webhook/lead-form`.
    - Webflow: Site settings → Forms → Webhook. Elementor: Form → Actions after submit → Webhook. Typeform: put [02 · Secure Gateway](../02-secure-webhook-gateway) in front for signature checks.
@@ -125,6 +134,15 @@ curl -X POST "http://localhost:5678/webhook-test/lead-form" \
 ```
 
 Expected: `202 {"ok":true,"id":"S-..."}`, a contact `jane.doe@gmail.com` in HubSpot, a row in `Leads`, and an email whose warnings mention the corrected `gmial.com` domain.
+
+## What the live run caught
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| A resubmission with identical data landed in `Failed Syncs` | The PATCH body was empty, and HubSpot answers `400 No properties found to update` | New IF node *Anything to Update?* skips the call when nothing changed |
+| The email said `message: set to "…"` although the contact already had that message | The search request did not ask HubSpot for the `message` property | Added `message` to the searched properties |
+| Phone `+14155550123` showed as `14155550123` in the sheet | Google Sheets' default input mode (`USER_ENTERED`) parses values like typed text, so a leading `+` turns into a number. The same mode would execute a visitor's `=HYPERLINK(…)` as a formula | Every Sheets write now uses `cellFormat: RAW` |
+| New HubSpot accounts cannot create private apps | HubSpot replaced them with service keys | Setup docs now use a service key (same `hubspotAppToken` credential in n8n) |
 
 ## Estimated time saved
 

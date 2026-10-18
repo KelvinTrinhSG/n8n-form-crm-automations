@@ -11,7 +11,7 @@
         250
       ],
       "parameters": {
-        "content": "# 🔄 06 · HubSpot → Sheets Incremental Sync\n**A Google Sheet that mirrors HubSpot contacts, refreshed every hour, without re-downloading everything.**\n\n### Problem it solves\nManagers and finance want CRM data in a spreadsheet for pivots and Looker Studio. Someone exports a CSV every Monday, so the sheet is always stale.\n\n### How it works\n1. Read the **cursor** (last `lastmodifieddate` synced)\n2. HubSpot **search**: changed since cursor, oldest first, **paginated**\n3. Flatten pages, **dedupe**, translate internal values to labels\n4. **Upsert** rows by `hubspot_id`\n5. Save the new cursor, **only after** the write succeeded\n\n### Edge cases handled\n- Contact edited while paging → appears twice → newest kept\n- Same-millisecond edits → `GTE` + upsert, never skipped\n- Search cap (10,000) → backlog caught up over several runs\n- First run / reset → last 30 days\n\n### Why one-way\nTwo-way sync needs conflict rules (who wins if both changed?). HubSpot stays the source of truth; the sheet is read-only reporting.\n\n### Setup\n- 🔑 **HubSpot App Token** (`crm.objects.contacts.read`), **Google Sheets**",
+        "content": "# 🔄 06 · HubSpot → Sheets Incremental Sync\n**A Google Sheet that mirrors HubSpot contacts, refreshed every hour, without re-downloading everything.**\n\n### Problem it solves\nManagers and finance want CRM data in a spreadsheet for pivots and Looker Studio. Someone exports a CSV every Monday, so the sheet is always stale.\n\n### How it works\n1. Read the **cursor** (last `lastmodifieddate` synced)\n2. HubSpot **search**: changed since cursor, oldest first, **paginated**\n3. Flatten pages, **dedupe**, translate internal values to labels\n4. **Upsert** rows by `hubspot_id`\n5. Save the new cursor, **only after** the write succeeded\n\n### Edge cases handled\n- Contact edited while paging → appears twice → newest kept\n- Same-millisecond edits → `GTE` + upsert, never skipped\n- Search cap (10,000) → backlog caught up over several runs\n- First run / reset → last 30 days\n\n### Why one-way\nTwo-way sync needs conflict rules (who wins if both changed?). HubSpot stays the source of truth; the sheet is read-only reporting.\n\n### Setup\n- 🔑 **HubSpot Service Key** (`crm.objects.contacts.read`), **Google Sheets**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -377,7 +377,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"CRM Contacts\" · key = hubspot_id",
       "notesInFlow": true
@@ -468,7 +470,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Cursor moves forward",
       "notesInFlow": true

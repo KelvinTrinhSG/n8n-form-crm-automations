@@ -75,7 +75,7 @@ flowchart LR
 
 ## Setup
 
-1. Credentials: **Google Sheets** (3 nodes), **HubSpot App Token**, **SMTP**.
+1. Credentials: **Google Sheets** (3 nodes), **HubSpot Service Key**, **SMTP**.
 2. Tab `Failed Syncs` with the columns in [`docs/SETUP.md`](../../docs/SETUP.md). Project 01 writes to it.
 3. Set `OPS_EMAIL` when deploying.
 

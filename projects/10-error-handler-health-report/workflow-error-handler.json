@@ -212,7 +212,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Error Log\" · every error",
       "notesInFlow": true

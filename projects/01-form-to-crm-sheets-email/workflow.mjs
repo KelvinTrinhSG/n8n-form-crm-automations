@@ -12,7 +12,7 @@ const LEAD_FIELDS = ['email', 'first_name', 'last_name', 'phone', 'company', 'jo
 
 const SEARCH_BODY = `={{ JSON.stringify({
   filterGroups: [{ filters: [{ propertyName: 'email', operator: 'EQ', value: $json.lead.email }] }],
-  properties: ['email', 'firstname', 'lastname', 'company', 'website', 'phone', 'jobtitle', 'lifecyclestage', 'hubspot_owner_id'],
+  properties: ['email', 'firstname', 'lastname', 'company', 'website', 'phone', 'jobtitle', 'message', 'lifecyclestage', 'hubspot_owner_id'],
   limit: 1
 }) }}`;
 
@@ -25,6 +25,8 @@ const n = {
   find: note(hubspot('HubSpot · Find Contact', 'POST', '/crm/v3/objects/contacts/search', SEARCH_BODY), 'Search by email'),
   payload: note(code('Build CRM Payload', 'build-crm-payload.js'), 'No blank overwrites · stage only forward'),
   exists: note(ifTrue('Contact Exists?', "={{ $json.action === 'update' }}"), 'Update or create'),
+  // HubSpot answers 400 to a PATCH with no properties, so an identical resubmission skips the call.
+  changes: note(ifTrue('Anything to Update?', '={{ Object.keys($json.properties).length > 0 }}'), 'Identical resubmit → skip PATCH'),
   update: note(hubspot('HubSpot · Update Contact', 'PATCH', '/crm/v3/objects/contacts/{{ $json.contact_id }}',
     '={{ JSON.stringify({ properties: $json.properties }) }}'), 'PATCH changed fields only'),
   create: note(hubspot('HubSpot · Create Contact', 'POST', '/crm/v3/objects/contacts/batch/upsert',
@@ -42,8 +44,10 @@ chain(n.hook, n.normalize, n.valid);
 connect(n.valid, n.ok, 0);
 connect(n.valid, n.bad, 1);
 chain(n.ok, n.find, n.payload, n.exists);
-connect(n.exists, n.update, 0);
+connect(n.exists, n.changes, 0);
 connect(n.exists, n.create, 1);
+connect(n.changes, n.update, 0);
+connect(n.changes, n.collect, 1);
 connect(n.update, n.collect);
 connect(n.create, n.collect);
 chain(n.collect, n.sheet, n.mail, n.send);
@@ -79,7 +83,7 @@ Copying each submission into HubSpot, checking for an existing contact, pasting 
     stages: [
       { title: '① Capture', color: COLOR.green, body: 'Webhook from any form builder.', nodes: [n.hook] },
       { title: '② Clean & validate', color: COLOR.orange, body: 'Map aliases, fix typos.\nReject bad data with 400.', nodes: [n.normalize, n.valid, [n.ok, n.bad]] },
-      { title: '③ CRM create / update', color: COLOR.purple, body: 'Search → decide → write.\nRed outputs = failed after retries.', nodes: [n.find, n.payload, n.exists, [n.update, n.create]] },
+      { title: '③ CRM create / update', color: COLOR.purple, body: 'Search → decide → write.\nRed outputs = failed after retries.', nodes: [n.find, n.payload, n.exists, [n.changes, n.create], n.update] },
       { title: '④ Sheet & notify', color: COLOR.blue, body: 'One row per person.\nEmail the sales team.', nodes: [n.collect, n.sheet, n.mail, n.send] },
       { title: '⑤ Failure path', color: COLOR.red, body: 'Lead kept in the retry queue.', nodes: [n.failed, n.queue] },
     ],

@@ -471,7 +471,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Spam Log\" · review weekly",
       "notesInFlow": true
@@ -571,7 +573,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Gateway Failures\" · replay",
       "notesInFlow": true

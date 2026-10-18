@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# 📤 07 · Bulk CSV Import\n**After an event, upload the lead list once. The workflow cleans it, imports it without duplicates and emails a report.**\n\n### Problem it solves\nA 400-row CSV from a trade show: mixed headers, blank lines, typos, the same person twice, people who are already customers. Cleaning in Excel and importing by hand takes hours and still creates duplicates.\n\n### What it does\n1. Internal form: upload CSV + source name\n2. Map any header naming to HubSpot fields\n3. **Reject** rows without a valid email (reason kept)\n4. **Merge** duplicates inside the file\n5. HubSpot **batch upsert** by email, 100 per call, 1 call/s\n6. Report: created / updated / rejected → email + **Import Rejects** tab\n\n### Why dedupe before HubSpot\nOne duplicated email inside a batch makes HubSpot reject **the whole batch**.\n\n### Never lose rows\nA failed batch (after 3 retries) is listed email by email in the report. Partial errors (207) are reported too.\n\n### Setup\n- 🔑 **HubSpot App Token**, **Google Sheets**, **SMTP**",
+        "content": "# 📤 07 · Bulk CSV Import\n**After an event, upload the lead list once. The workflow cleans it, imports it without duplicates and emails a report.**\n\n### Problem it solves\nA 400-row CSV from a trade show: mixed headers, blank lines, typos, the same person twice, people who are already customers. Cleaning in Excel and importing by hand takes hours and still creates duplicates.\n\n### What it does\n1. Internal form: upload CSV + source name\n2. Map any header naming to HubSpot fields\n3. **Reject** rows without a valid email (reason kept)\n4. **Merge** duplicates inside the file\n5. HubSpot **batch upsert** by email, 100 per call, 1 call/s\n6. Report: created / updated / rejected → email + **Import Rejects** tab\n\n### Why dedupe before HubSpot\nOne duplicated email inside a batch makes HubSpot reject **the whole batch**.\n\n### Never lose rows\nA failed batch (after 3 retries) is listed email by email in the report. Partial errors (207) are reported too.\n\n### Setup\n- 🔑 **HubSpot Service Key**, **Google Sheets**, **SMTP**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -367,7 +367,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Import Rejects\" · fix & re-upload",
       "notesInFlow": true

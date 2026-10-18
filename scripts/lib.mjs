@@ -120,7 +120,7 @@ export const http = (name, { method = 'GET', url, body, credential, generic, que
     options: { timeout: 30000, ...options },
   }, extra);
 
-// HubSpot private app token (n8n credential type "HubSpot App Token").
+// HubSpot service key (n8n credential "HubSpot Service Key", internal type hubspotAppToken).
 // Default: 3 retries for 429/5xx, then the item goes out of the red error output.
 export const hubspot = (name, method, pathExpr, body, extra = {}) => http(name, {
   method,
@@ -155,7 +155,9 @@ export const sheetsWrite = (name, tab, { operation = 'append', match, fields, fr
       matchingColumns: match ? [match] : [],
       schema: fields.map((f) => ({ id: f, displayName: f, required: false, defaultMatch: false, display: true, type: 'string', canBeUsedToMatch: true })),
     },
-    options: {},
+    // RAW = store exactly what we send. The default (USER_ENTERED) turns "+14155550123" into a number
+    // and would execute a visitor's "=HYPERLINK(...)" as a formula.
+    options: { cellFormat: 'RAW' },
   });
 
 export const sheetsRead = (name, tab, extra = {}) => node(name, 'n8n-nodes-base.googleSheets', 4.5, {

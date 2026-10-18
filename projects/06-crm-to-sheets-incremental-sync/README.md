@@ -61,7 +61,7 @@ Two-way sync sounds better but needs conflict rules: if a rep edits HubSpot and 
 
 ## Setup
 
-1. Credentials: **HubSpot App Token** (`crm.objects.contacts.read`), **Google Sheets** (3 nodes).
+1. Credentials: **HubSpot Service Key** (`crm.objects.contacts.read`), **Google Sheets** (3 nodes).
 2. Tabs `Sync State` (header row only) and `CRM Contacts` with the columns in [`docs/SETUP.md`](../../docs/SETUP.md).
 3. To sync more properties: add them to `properties` in `build-search.js`, map them in `map-rows.js`, add the column to `ROW_FIELDS` in `workflow.mjs` and to the sheet.
 

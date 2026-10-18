@@ -11,7 +11,7 @@
         -50
       ],
       "parameters": {
-        "content": "# 📅 09 · Meeting Booked → Deal\n**A booked demo becomes a HubSpot deal automatically. Reschedules and cancellations keep the CRM honest.**\n\n### Problem it solves\nA prospect books a demo in Calendly. The rep has to create the contact and the deal by hand, copy the form answers, and remember to update the deal if the meeting moves or is canceled. Pipeline reports end up wrong.\n\n### Events\n| Calendly event | Result |\n|---|---|\n| `invitee.created` | Contact upsert + **deal** (Appointment scheduled) + row + email |\n| Reschedule | **Same deal kept**, new row, old row \"Moved\" |\n| `invitee.canceled` | Deal → canceled stage + reason, row updated, email |\n\n### Real-world gotchas handled\n- Calendly **reschedule = cancel + create**. The cancel part (`rescheduled: true`) is ignored, so no false \"canceled\" alerts\n- **Webhook retries**: invitee already in the sheet → stop, no second deal\n- **Signature** verified (`t=…,v1=…`), 5-min window\n- Host email missing → falls back to the sales inbox\n\n### Setup\n- Env: `CALENDLY_SIGNING_KEY`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **HubSpot App Token** (contacts + deals write), **Google Sheets**, **SMTP**\n- Calendly webhook subscription (API): events `invitee.created`, `invitee.canceled`",
+        "content": "# 📅 09 · Meeting Booked → Deal\n**A booked demo becomes a HubSpot deal automatically. Reschedules and cancellations keep the CRM honest.**\n\n### Problem it solves\nA prospect books a demo in Calendly. The rep has to create the contact and the deal by hand, copy the form answers, and remember to update the deal if the meeting moves or is canceled. Pipeline reports end up wrong.\n\n### Events\n| Calendly event | Result |\n|---|---|\n| `invitee.created` | Contact upsert + **deal** (Appointment scheduled) + row + email |\n| Reschedule | **Same deal kept**, new row, old row \"Moved\" |\n| `invitee.canceled` | Deal → canceled stage + reason, row updated, email |\n\n### Real-world gotchas handled\n- Calendly **reschedule = cancel + create**. The cancel part (`rescheduled: true`) is ignored, so no false \"canceled\" alerts\n- **Webhook retries**: invitee already in the sheet → stop, no second deal\n- **Signature** verified (`t=…,v1=…`), 5-min window\n- Host email missing → falls back to the sales inbox\n\n### Setup\n- Env: `CALENDLY_SIGNING_KEY`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **HubSpot Service Key** (contacts + deals write), **Google Sheets**, **SMTP**\n- Calendly webhook subscription (API): events `invitee.created`, `invitee.canceled`",
         "color": 1,
         "width": 460,
         "height": 980
@@ -682,7 +682,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "Tab \"Meetings\" · key = invitee_uri",
       "notesInFlow": true
@@ -881,7 +883,9 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "cellFormat": "RAW"
+        }
       },
       "notes": "status = Canceled",
       "notesInFlow": true

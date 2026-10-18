@@ -76,7 +76,7 @@ flowchart LR
 
 ## Setup
 
-1. Credentials: **Google Sheets** (3 nodes), **HubSpot App Token** (`crm.objects.contacts.read`), **SMTP**.
+1. Credentials: **Google Sheets** (3 nodes), **HubSpot Service Key** (`crm.objects.contacts.read`), **SMTP**.
 2. Tabs `Leads` (from 01) and `Sales Reps` (from 04).
 3. Adjust in `find-candidates.js`: `TZ`, `OPEN_MIN`/`CLOSE_MIN`, `HOLIDAYS`, `LEVELS`. Manager address = `SALES_EMAIL` at deploy time.
 

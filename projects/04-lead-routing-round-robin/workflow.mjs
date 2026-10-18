@@ -60,7 +60,7 @@ The manager edits tab **Sales Reps** (active, territories, segments, out_of_offi
 Project 01 (after the contact is created) or any system: POST \`{hubspot_contact_id, email, name, company, country, employees, current_owner_id}\`.
 
 ### Setup
-- 🔑 **Google Sheets**, **HubSpot App Token** (scope \`crm.objects.contacts.write\`), **SMTP**`,
+- 🔑 **Google Sheets**, **HubSpot Service Key** (scope \`crm.objects.contacts.write\`), **SMTP**`,
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Lead details from 01 or any caller.', nodes: [n.hook] },
       { title: '② Decide owner', color: COLOR.orange, body: 'Rules from the Sales Reps sheet.', nodes: [n.reps, n.choose, n.emails, n.assigned] },
