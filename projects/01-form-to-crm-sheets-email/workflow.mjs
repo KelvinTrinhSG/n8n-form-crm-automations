@@ -20,6 +20,9 @@ const n = {
   hook: note(webhook('Lead Form Webhook', 'lead-form', '3a7d2c10-1b4e-4f6a-9c21-0e5f8a7b6c01'), 'POST /webhook/lead-form'),
   normalize: note(code('Normalize & Validate', 'normalize-lead.js'), 'Aliases · trim · email/phone/name fixes'),
   valid: note(ifTrue('Is Valid?', '={{ $json.valid }}'), 'Email present and well-formed'),
+  seen: note(code('Seen Submission?', 'check-seen.js'), 'Same submission_id in 24 h?'),
+  isNew: note(ifTrue('First Time?', '={{ !$json.duplicate }}'), 'Retry / resend → stop here'),
+  dup: note(respond('Respond 200 Duplicate', 200, '={{ JSON.stringify({ ok: true, duplicate: true, id: $json.lead.submission_id }) }}'), 'No CRM call, no email'),
   bad: note(respond('Respond 400 Invalid', 400, '={{ JSON.stringify({ ok: false, errors: $json.errors }) }}'), 'Form shows the errors'),
   ok: note(respond('Respond 202 Accepted', 202, '={{ JSON.stringify({ ok: true, id: $json.lead.submission_id }) }}'), 'Visitor never waits for the CRM'),
   find: note(hubspot('HubSpot · Find Contact', 'POST', '/crm/v3/objects/contacts/search', SEARCH_BODY), 'Search by email'),
@@ -41,8 +44,11 @@ const n = {
 
 const { c, connect, chain } = connections();
 chain(n.hook, n.normalize, n.valid);
-connect(n.valid, n.ok, 0);
+connect(n.valid, n.seen, 0);
 connect(n.valid, n.bad, 1);
+connect(n.seen, n.isNew);
+connect(n.isNew, n.ok, 0);
+connect(n.isNew, n.dup, 1);
 chain(n.ok, n.find, n.payload, n.exists);
 connect(n.exists, n.changes, 0);
 connect(n.exists, n.create, 1);
@@ -67,10 +73,11 @@ Copying each submission into HubSpot, checking for an existing contact, pasting 
 ### Flow
 1. Website form POSTs to the webhook
 2. Data cleaned + validated (bad data → 400)
-3. Visitor gets **202** immediately
-4. HubSpot: search by email → **update** or **create**
-5. Leads sheet: **append or update** by email
-6. HTML email to sales
+3. Same \`submission_id\` already processed in 24 h → 200, stop
+4. Visitor gets **202** immediately
+5. HubSpot: search by email → **update** or **create**
+6. Leads sheet: **append or update** by email
+7. HTML email to sales
 
 ### Data rules
 - Never overwrite CRM data with blanks
@@ -82,7 +89,7 @@ Copying each submission into HubSpot, checking for an existing contact, pasting 
 - Any other failure → **10 · Error Handler**`,
     stages: [
       { title: '① Capture', color: COLOR.green, body: 'Webhook from any form builder.', nodes: [n.hook] },
-      { title: '② Clean & validate', color: COLOR.orange, body: 'Map aliases, fix typos.\nReject bad data with 400.', nodes: [n.normalize, n.valid, [n.ok, n.bad]] },
+      { title: '② Clean & validate', color: COLOR.orange, body: 'Map aliases, fix typos.\nReject bad data with 400.\nSkip a resent submission_id.', nodes: [n.normalize, n.valid, [n.seen, n.bad], n.isNew, [n.ok, n.dup]] },
       { title: '③ CRM create / update', color: COLOR.purple, body: 'Search → decide → write.\nRed outputs = failed after retries.', nodes: [n.find, n.payload, n.exists, [n.changes, n.create], n.update] },
       { title: '④ Sheet & notify', color: COLOR.blue, body: 'One row per person.\nEmail the sales team.', nodes: [n.collect, n.sheet, n.mail, n.send] },
       { title: '⑤ Failure path', color: COLOR.red, body: 'Lead kept in the retry queue.', nodes: [n.failed, n.queue] },

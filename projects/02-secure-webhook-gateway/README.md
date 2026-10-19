@@ -2,7 +2,7 @@
 
 > A small gateway in front of the lead pipeline. Only signed, human, first-time submissions reach the CRM; everything else gets the right HTTP answer and is logged.
 
-**Status:** workflow built and importable; signature checks and filters covered by 6 unit tests (real HMAC computed in the tests). Not yet run against a live form provider.
+**Status:** ran live on n8n 2.43 (2026-10-19) with 14 signed and unsigned requests, one per branch: 14/14 correct after the fix below. Signature checks and filters are also covered by 6 unit tests (real HMAC computed in the tests). Not yet connected to a real form provider (requests were sent by a test script).
 
 ---
 
@@ -45,12 +45,15 @@ Any single heuristic has false positives: a real person can use a disposable add
 flowchart LR
   A[Webhook<br/>raw body on] --> B[Verify signature] --> C[Spam & duplicate filter] --> D{Verdict}
   D -- rejected --> E[401]
-  D -- rate_limited --> F[429] --> L[(Spam Log)]
-  D -- spam --> G[200 silent] --> L
+  D -- rate_limited / spam --> L[(Spam Log)] --> W{Which block?}
+  W -- rate_limited --> F[429]
+  W -- spam --> G[200 silent]
   D -- duplicate --> H[200 duplicate]
-  D -- accepted --> I[202] --> J[Forward to 01]
-  J -. fails after 3 retries .-> K[(Gateway Failures)]
+  D -- accepted --> J[Forward to 01] --> I[202]
+  J -. fails after 3 retries .-> K[(Gateway Failures)] --> I
 ```
+
+Every response node is the **last** node of its branch (see "What the live run caught").
 
 ## Node by node
 
@@ -60,10 +63,32 @@ flowchart LR
 | Verify Signature | Code | [`verify-signature.js`](src/verify-signature.js) |
 | Spam & Duplicate Filter | Code | [`spam-filter.js`](src/spam-filter.js), state in workflow static data |
 | Route by Verdict | Switch | 5 outputs |
-| Respond 401 / 429 / 200 / 200 / 202 | Respond to Webhook | No internal details in error bodies |
-| Log Blocked Request | Google Sheets | Append to `Spam Log` |
+| Log Blocked Request | Google Sheets | Append to `Spam Log`; on error continues, so the caller still gets an answer |
+| Which Block? | Switch | After logging: `rate_limited` → 429, `spam` → 200 |
+| Respond 401 / 429 / 200 / 200 / 202 | Respond to Webhook | Last node of each branch. No internal details in error bodies |
 | Forward to Lead Pipeline | HTTP Request | `POST {N8N_URL}/webhook/lead-form`, 3 retries, error output on |
 | Log Forward Failure | Google Sheets | `Gateway Failures`: original payload kept for replay |
+
+## What the live run caught
+
+The first live run passed 12 of 14 checks. Signature, replay window, honeypot, weak signals and the Typeform format all worked, which also confirmed the raw body arrives as binary `data`. Two checks failed:
+
+| Request | Expected | Got |
+|---|---|---|
+| Same lead sent again right after the first | `200 duplicate` | `202`, forwarded again |
+| 6th request from one IP | `429` | `200` |
+
+**Cause.** n8n saves workflow static data only when an execution **finishes**. The first version answered the caller first and then forwarded to 01 / wrote the Sheet (≈ 3.5 s). The next request started before the previous execution had saved its fingerprint or IP counter, so it read stale state. After 6 flood requests the stored counter for that IP was `1`: each execution overwrote the others. Resending the same lead once the earlier executions had finished returned `duplicate: true`, so the logic was right and only the timing was wrong. Unit tests could not catch this: it needs two overlapping executions on a real n8n.
+
+**Impact.** HubSpot still had one contact (01 upserts by email), but sales got **two emails** for one lead ("New lead" and "Returning lead").
+
+**Fix.**
+1. Every Respond node is now the last node of its branch, so the caller only gets an answer once the work is done and the execution is about to save its state. Forwarding stays fast because 01 answers `202` right away.
+2. Second line of defence in [01](../01-form-to-crm-sheets-email): a `submission_id` already processed in the last 24 h returns `200 duplicate` with no CRM call and no email.
+
+**After the fix:** 14/14, and one gateway run produces exactly one 01 execution and one email. Sending the same `submission_id` straight to 01 returns `{"duplicate":true}`.
+
+Two requests arriving at the *same* moment can still both pass, because static data has no atomic "check and set". That is the Redis item under Limitations.
 
 ## Implementation details worth knowing
 
@@ -103,7 +128,7 @@ Depends on spam volume. A form receiving 10 junk and 5 duplicate submissions a w
 
 ## Limitations & production notes
 
-- Static data is **only persisted for active (production) executions**, and two executions running at the same moment can both read the old state. For high traffic, move counters and fingerprints to Redis (n8n has a Redis node) with atomic `INCR`/`SET NX`.
+- Static data is **only persisted for active (production) executions**, and it is saved when the execution ends: two executions running at the same moment can both read the old state (seen in the live run, see above). For high traffic, move counters and fingerprints to Redis (n8n has a Redis node) with atomic `INCR`/`SET NX`, e.g. a hosted Upstash database.
 - The IP is taken from `X-Forwarded-For`. Behind a reverse proxy that is correct; exposed directly, a client can fake it. Configure the proxy to overwrite the header.
 - Heuristics need tuning per market: the Cyrillic rule is wrong for a business that sells in Eastern Europe.
 - For stronger bot protection, add Cloudflare Turnstile or reCAPTCHA on the form and verify the token here.

@@ -11,7 +11,7 @@
         -150
       ],
       "parameters": {
-        "content": "# 🛡️ 02 · Secure Webhook Gateway\n**Sits in front of the lead pipeline. Only signed, human, first-time submissions reach the CRM.**\n\n### Problem it solves\nA public webhook URL gets found. Bots post junk, the same form is submitted twice, the provider retries on timeouts. Each one becomes a fake or duplicate CRM contact that someone deletes by hand.\n\n### Checks, in order\n1. **Signature** (HMAC-SHA256, timing-safe, 5-min replay window) → 401\n2. **Rate limit** 5 / IP / 10 min → 429\n3. **Spam**: honeypot, filled in < 3 s, disposable domain, link count, spam phrases → 200 (silent)\n4. **Duplicate**: same submission id, or same email + message within 10 min → 200\n5. Otherwise → 202 and forwarded to **01**\n\n### Setup\n- Env: `WEBHOOK_SECRET`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **Google Sheets** → *Log Blocked Request*, *Log Forward Failure*\n\n### Why spam gets 200\nA 4xx tells the bot it was detected, and it adapts. A normal 200 does not.",
+        "content": "# 🛡️ 02 · Secure Webhook Gateway\n**Sits in front of the lead pipeline. Only signed, human, first-time submissions reach the CRM.**\n\n### Problem it solves\nA public webhook URL gets found. Bots post junk, the same form is submitted twice, the provider retries on timeouts. Each one becomes a fake or duplicate CRM contact that someone deletes by hand.\n\n### Checks, in order\n1. **Signature** (HMAC-SHA256, timing-safe, 5-min replay window) → 401\n2. **Rate limit** 5 / IP / 10 min → 429\n3. **Spam**: honeypot, filled in < 3 s, disposable domain, link count, spam phrases → 200 (silent)\n4. **Duplicate**: same submission id, or same email + message within 10 min → 200\n5. Otherwise → 202 and forwarded to **01**\n\n### Setup\n- Env: `WEBHOOK_SECRET`, `NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`\n- 🔑 **Google Sheets** → *Log Blocked Request*, *Log Forward Failure*\n\n### Why spam gets 200\nA 4xx tells the bot it was detected, and it adapts. A normal 200 does not.\n\n### Why the responses are at the end\nn8n saves static data when the execution finishes. Answering first let a retry arrive before the duplicate fingerprint was saved (live run: 2 sales emails for 1 lead).",
         "color": 1,
         "width": 460,
         "height": 1180
@@ -50,8 +50,8 @@
       }
     },
     {
-      "id": "stage-3-3-respond",
-      "name": "Stage 3 · ③ Respond",
+      "id": "stage-3-3-log-forward",
+      "name": "Stage 3 · ③ Log & forward",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
@@ -59,40 +59,40 @@
         -150
       ],
       "parameters": {
-        "content": "## ③ Respond\nEach outcome gets the right HTTP status.",
-        "color": 5,
-        "width": 240,
-        "height": 1180
-      }
-    },
-    {
-      "id": "stage-4-4-log-forward",
-      "name": "Stage 4 · ④ Log & forward",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
-      "position": [
-        1320,
-        -150
-      ],
-      "parameters": {
-        "content": "## ④ Log & forward\nBlocked requests logged.\nGood ones forwarded to 01.",
+        "content": "## ③ Log & forward\nBlocked requests logged.\nGood ones forwarded to 01.",
         "color": 6,
+        "width": 480,
+        "height": 1180
+      }
+    },
+    {
+      "id": "stage-4-4-failure-path",
+      "name": "Stage 4 · ④ Failure path",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1560,
+        -150
+      ],
+      "parameters": {
+        "content": "## ④ Failure path\nPipeline down → keep the payload for replay.",
+        "color": 3,
         "width": 240,
         "height": 1180
       }
     },
     {
-      "id": "stage-5-5-failure-path",
-      "name": "Stage 5 · ⑤ Failure path",
+      "id": "stage-5-5-respond-last",
+      "name": "Stage 5 · ⑤ Respond (last)",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1600,
+        1840,
         -150
       ],
       "parameters": {
-        "content": "## ⑤ Failure path\nPipeline down → keep the payload for replay.",
-        "color": 3,
+        "content": "## ⑤ Respond (last)\nAnswer only after the state is final.",
+        "color": 5,
         "width": 240,
         "height": 1180
       }
@@ -288,107 +288,12 @@
       "notesInFlow": true
     },
     {
-      "id": "respond-401",
-      "name": "Respond 401",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1110,
-        0
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: false, error: \"unauthorized\" }) }}",
-        "options": {
-          "responseCode": 401
-        }
-      },
-      "notes": "No details leaked",
-      "notesInFlow": true
-    },
-    {
-      "id": "respond-429",
-      "name": "Respond 429",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1110,
-        200
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: false, error: \"too many requests\" }) }}",
-        "options": {
-          "responseCode": 429
-        }
-      },
-      "notes": "Slow down",
-      "notesInFlow": true
-    },
-    {
-      "id": "respond-200-spam",
-      "name": "Respond 200 (spam)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1110,
-        400
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
-        "options": {
-          "responseCode": 200
-        }
-      },
-      "notes": "Looks normal to the bot",
-      "notesInFlow": true
-    },
-    {
-      "id": "respond-200-duplicate",
-      "name": "Respond 200 (duplicate)",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1110,
-        600
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true }) }}",
-        "options": {
-          "responseCode": 200
-        }
-      },
-      "notes": "Idempotent",
-      "notesInFlow": true
-    },
-    {
-      "id": "respond-202",
-      "name": "Respond 202",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
-      "position": [
-        1110,
-        800
-      ],
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
-        "options": {
-          "responseCode": 202
-        }
-      },
-      "notes": "Accepted",
-      "notesInFlow": true
-    },
-    {
       "id": "log-blocked-request",
       "name": "Log Blocked Request",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1390,
+        1110,
         300
       ],
       "parameters": {
@@ -475,6 +380,7 @@
           "cellFormat": "RAW"
         }
       },
+      "onError": "continueRegularOutput",
       "notes": "Tab \"Spam Log\" · review weekly",
       "notesInFlow": true
     },
@@ -484,7 +390,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1390,
+        1110,
         500
       ],
       "parameters": {
@@ -505,12 +411,79 @@
       "notesInFlow": true
     },
     {
+      "id": "which-block",
+      "name": "Which Block?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1350,
+        400
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "spam-duplicate-filter-item-json-verdict-equals-rate-limited",
+                    "leftValue": "={{ $('Spam & Duplicate Filter').item.json.verdict }}",
+                    "rightValue": "rate_limited",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "rate_limited"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "spam-duplicate-filter-item-json-verdict-equals-spam",
+                    "leftValue": "={{ $('Spam & Duplicate Filter').item.json.verdict }}",
+                    "rightValue": "spam",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "spam"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "429 or silent 200",
+      "notesInFlow": true
+    },
+    {
       "id": "log-forward-failure",
       "name": "Log Forward Failure",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1670,
+        1630,
         400
       ],
       "parameters": {
@@ -579,6 +552,101 @@
       },
       "notes": "Tab \"Gateway Failures\" · replay",
       "notesInFlow": true
+    },
+    {
+      "id": "respond-401",
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1910,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"unauthorized\" }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "notes": "No details leaked",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-429",
+      "name": "Respond 429",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1910,
+        200
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: \"too many requests\" }) }}",
+        "options": {
+          "responseCode": 429
+        }
+      },
+      "notes": "Slow down",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200-spam",
+      "name": "Respond 200 (spam)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1910,
+        400
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Looks normal to the bot",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200-duplicate",
+      "name": "Respond 200 (duplicate)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1910,
+        600
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "Idempotent",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-202",
+      "name": "Respond 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1910,
+        800
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "notes": "Accepted",
+      "notesInFlow": true
     }
   ],
   "connections": {
@@ -626,14 +694,14 @@
         ],
         [
           {
-            "node": "Respond 429",
+            "node": "Log Blocked Request",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Respond 200 (spam)",
+            "node": "Log Blocked Request",
             "type": "main",
             "index": 0
           }
@@ -647,40 +715,36 @@
         ],
         [
           {
-            "node": "Respond 202",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Respond 429": {
-      "main": [
-        [
-          {
-            "node": "Log Blocked Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Respond 200 (spam)": {
-      "main": [
-        [
-          {
-            "node": "Log Blocked Request",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Respond 202": {
-      "main": [
-        [
-          {
             "node": "Forward to Lead Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Blocked Request": {
+      "main": [
+        [
+          {
+            "node": "Which Block?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which Block?": {
+      "main": [
+        [
+          {
+            "node": "Respond 429",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 200 (spam)",
             "type": "main",
             "index": 0
           }
@@ -689,10 +753,27 @@
     },
     "Forward to Lead Pipeline": {
       "main": [
-        [],
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
         [
           {
             "node": "Log Forward Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Forward Failure": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
             "type": "main",
             "index": 0
           }

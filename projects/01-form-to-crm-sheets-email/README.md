@@ -49,7 +49,9 @@ flowchart LR
   A[Webhook<br/>POST /webhook/lead-form] --> B[Normalize & Validate]
   B --> C{Is valid?}
   C -- no --> D[Respond 400<br/>errors]
-  C -- yes --> E[Respond 202] --> F[HubSpot<br/>search by email] --> G[Build CRM payload<br/>data rules]
+  C -- yes --> S{submission_id<br/>seen in 24 h?}
+  S -- yes --> SD[Respond 200<br/>duplicate]
+  S -- no --> E[Respond 202] --> F[HubSpot<br/>search by email] --> G[Build CRM payload<br/>data rules]
   G --> H{Contact exists?}
   H -- yes --> I[HubSpot PATCH<br/>changed fields only]
   H -- no --> J[HubSpot batch upsert<br/>race-safe create]
@@ -79,7 +81,9 @@ These rules are written down because "update the CRM" means different things to 
 | Lead Form Webhook | Webhook | `POST /webhook/lead-form`, response sent by a *Respond to Webhook* node |
 | Normalize & Validate | Code | [`normalize-lead.js`](src/normalize-lead.js) |
 | Is Valid? | IF | `valid === true` |
-| Respond 400 Invalid / Respond 202 Accepted | Respond to Webhook | JSON body `{ ok, errors }` / `{ ok, id }` |
+| Seen Submission? | Code | [`check-seen.js`](src/check-seen.js): a caller-sent `submission_id` already processed in 24 h is a duplicate (static data). Added after the [02 live run](../02-secure-webhook-gateway#what-the-live-run-caught) |
+| First Time? | IF | `duplicate === false` |
+| Respond 400 Invalid / Respond 202 Accepted / Respond 200 Duplicate | Respond to Webhook | JSON body `{ ok, errors }` / `{ ok, id }` / `{ ok, duplicate: true, id }` |
 | HubSpot · Find Contact | HTTP Request | `POST /crm/v3/objects/contacts/search`, filter `email EQ` |
 | Build CRM Payload | Code | [`build-crm-payload.js`](src/build-crm-payload.js) |
 | Contact Exists? | IF | `action === 'update'` |

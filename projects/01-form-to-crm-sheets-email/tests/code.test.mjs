@@ -90,6 +90,22 @@ test('failed sync keeps the payload even when the search step failed', async () 
   assert.equal(JSON.parse(row.payload).email, lead.email);
 });
 
+test('a resent submission_id is skipped; generated ids never count as seen', async () => {
+  const staticData = {};
+  const run = (body) => runCode(src('check-seen.js'), {
+    items: [{ valid: true, lead }], staticData, nodes: { 'Lead Form Webhook': [{ body, query: {} }] },
+  });
+  const [first] = await run({ email: lead.email, submission_id: 'gw-123' });
+  const [again] = await run({ email: lead.email, submission_id: 'gw-123' });
+  const [noId1] = await run({ email: lead.email });
+  const [noId2] = await run({ email: lead.email });
+  assert.equal(first.duplicate, false);
+  assert.equal(again.duplicate, true);
+  assert.equal(noId1.duplicate, false);
+  assert.equal(noId2.duplicate, false);
+  assert.deepEqual(Object.keys(staticData.processed), ['gw-123']);
+});
+
 test('failed sync reads the status code from the live n8n error shape (cause.message)', async () => {
   const [row] = await runCode(src('prepare-failed-sync.js'), {
     items: [{ error: {

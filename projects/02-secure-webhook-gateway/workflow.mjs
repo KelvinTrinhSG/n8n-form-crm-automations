@@ -18,7 +18,9 @@ const n = {
   rSpam: note(respond('Respond 200 (spam)', 200, '={{ JSON.stringify({ ok: true }) }}'), 'Looks normal to the bot'),
   rDup: note(respond('Respond 200 (duplicate)', 200, '={{ JSON.stringify({ ok: true, duplicate: true }) }}'), 'Idempotent'),
   rOk: note(respond('Respond 202', 202, '={{ JSON.stringify({ ok: true }) }}'), 'Accepted'),
-  log: note(sheetsWrite('Log Blocked Request', 'Spam Log', { fields: LOG_FIELDS, from: logFrom }), 'Tab "Spam Log" · review weekly'),
+  // A Sheets outage must not leave the caller without an answer.
+  log: note(Object.assign(sheetsWrite('Log Blocked Request', 'Spam Log', { fields: LOG_FIELDS, from: logFrom }), { onError: 'continueRegularOutput' }), 'Tab "Spam Log" · review weekly'),
+  block: note(switchOn('Which Block?', "={{ $('Spam & Duplicate Filter').item.json.verdict }}", ['rate_limited', 'spam']), '429 or silent 200'),
   forward: note(http('Forward to Lead Pipeline', {
     method: 'POST',
     url: `${CONFIG.N8N_URL}/webhook/lead-form`,
@@ -31,12 +33,20 @@ const n = {
 };
 
 const { c, connect, chain } = connections();
+// Respond nodes come LAST. Static data (fingerprints, IP counters) is only saved when the execution
+// ends, so answering first let a retry arrive before the state was saved (found in the live run).
 chain(n.hook, n.verify, n.filter, n.route);
-[n.r401, n.r429, n.rSpam, n.rDup, n.rOk].forEach((r, i) => connect(n.route, r, i));
-connect(n.r429, n.log);
-connect(n.rSpam, n.log);
-connect(n.rOk, n.forward);
+connect(n.route, n.r401, 0);
+connect(n.route, n.log, 1);
+connect(n.route, n.log, 2);
+connect(n.route, n.rDup, 3);
+connect(n.route, n.forward, 4);
+connect(n.log, n.block);
+connect(n.block, n.r429, 0);
+connect(n.block, n.rSpam, 1);
+connect(n.forward, n.rOk, 0);
 connect(n.forward, n.failed, 1);
+connect(n.failed, n.rOk); // kept for replay, so the caller does not need to resend
 
 export default [{
   file: 'workflow.json',
@@ -60,13 +70,16 @@ A public webhook URL gets found. Bots post junk, the same form is submitted twic
 - 🔑 **Google Sheets** → *Log Blocked Request*, *Log Forward Failure*
 
 ### Why spam gets 200
-A 4xx tells the bot it was detected, and it adapts. A normal 200 does not.`,
+A 4xx tells the bot it was detected, and it adapts. A normal 200 does not.
+
+### Why the responses are at the end
+n8n saves static data when the execution finishes. Answering first let a retry arrive before the duplicate fingerprint was saved (live run: 2 sales emails for 1 lead).`,
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Raw body kept for the signature.', nodes: [n.hook] },
       { title: '② Verify & filter', color: COLOR.orange, body: 'Signature first, then spam and duplicate rules.', nodes: [n.verify, n.filter, n.route] },
-      { title: '③ Respond', color: COLOR.blue, body: 'Each outcome gets the right HTTP status.', nodes: [[n.r401, n.r429, n.rSpam, n.rDup, n.rOk]] },
-      { title: '④ Log & forward', color: COLOR.purple, body: 'Blocked requests logged.\nGood ones forwarded to 01.', nodes: [[n.log, n.forward]] },
-      { title: '⑤ Failure path', color: COLOR.red, body: 'Pipeline down → keep the payload for replay.', nodes: [n.failed] },
+      { title: '③ Log & forward', color: COLOR.purple, body: 'Blocked requests logged.\nGood ones forwarded to 01.', nodes: [[n.log, n.forward], n.block] },
+      { title: '④ Failure path', color: COLOR.red, body: 'Pipeline down → keep the payload for replay.', nodes: [n.failed] },
+      { title: '⑤ Respond (last)', color: COLOR.blue, body: 'Answer only after the state is final.', nodes: [[n.r401, n.r429, n.rSpam, n.rDup, n.rOk]] },
     ],
   }),
 }];

@@ -11,7 +11,7 @@
         150
       ],
       "parameters": {
-        "content": "# 📥 01 · Form → CRM → Sheets → Email\n**Every website form submission becomes a clean HubSpot contact, a row in the Leads sheet and an email to sales, in seconds.**\n\n### Replaces\nCopying each submission into HubSpot, checking for an existing contact, pasting it into the tracking sheet and forwarding it to sales. **≈ 6 min per lead.**\n\n### Flow\n1. Website form POSTs to the webhook\n2. Data cleaned + validated (bad data → 400)\n3. Visitor gets **202** immediately\n4. HubSpot: search by email → **update** or **create**\n5. Leads sheet: **append or update** by email\n6. HTML email to sales\n\n### Data rules\n- Never overwrite CRM data with blanks\n- Name/company: fill only if empty\n- Lifecycle stage only moves forward\n\n### Reliability\n- HubSpot: 3 retries, then the lead goes to **Failed Syncs** → retried by **03**\n- Any other failure → **10 · Error Handler**",
+        "content": "# 📥 01 · Form → CRM → Sheets → Email\n**Every website form submission becomes a clean HubSpot contact, a row in the Leads sheet and an email to sales, in seconds.**\n\n### Replaces\nCopying each submission into HubSpot, checking for an existing contact, pasting it into the tracking sheet and forwarding it to sales. **≈ 6 min per lead.**\n\n### Flow\n1. Website form POSTs to the webhook\n2. Data cleaned + validated (bad data → 400)\n3. Same `submission_id` already processed in 24 h → 200, stop\n4. Visitor gets **202** immediately\n5. HubSpot: search by email → **update** or **create**\n6. Leads sheet: **append or update** by email\n7. HTML email to sales\n\n### Data rules\n- Never overwrite CRM data with blanks\n- Name/company: fill only if empty\n- Lifecycle stage only moves forward\n\n### Reliability\n- HubSpot: 3 retries, then the lead goes to **Failed Syncs** → retried by **03**\n- Any other failure → **10 · Error Handler**",
         "color": 1,
         "width": 460,
         "height": 640
@@ -43,9 +43,9 @@
         150
       ],
       "parameters": {
-        "content": "## ② Clean & validate\nMap aliases, fix typos.\nReject bad data with 400.",
+        "content": "## ② Clean & validate\nMap aliases, fix typos.\nReject bad data with 400.\nSkip a resent submission_id.",
         "color": 2,
-        "width": 720,
+        "width": 1200,
         "height": 580
       }
     },
@@ -55,7 +55,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1040,
+        1520,
         150
       ],
       "parameters": {
@@ -71,7 +71,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        2280,
+        2760,
         150
       ],
       "parameters": {
@@ -87,7 +87,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        3280,
+        3760,
         150
       ],
       "parameters": {
@@ -168,22 +168,18 @@
       "notesInFlow": true
     },
     {
-      "id": "respond-202-accepted",
-      "name": "Respond 202 Accepted",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "id": "seen-submission",
+      "name": "Seen Submission?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         830,
         300
       ],
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ JSON.stringify({ ok: true, id: $json.lead.submission_id }) }}",
-        "options": {
-          "responseCode": 202
-        }
+        "jsCode": "// Second line of defence against duplicates (the first is 02 · Secure Webhook Gateway).\n// If the caller sent its own submission_id and we already processed it in the last 24 h,\n// skip the CRM, the sheet and the sales email. Ids we generated ourselves (no id sent) are never \"seen\".\n// Note: static data is saved when the execution ends, so two calls arriving within a few seconds\n// can both pass. That gap is closed in 02; for high traffic use Redis SET NX instead.\nconst item = $input.first().json;\nconst req = $('Lead Form Webhook').first().json;\nconst sentId = String((req.body && req.body.submission_id) || (req.query && req.query.submission_id) || '').trim();\n\nconst state = $getWorkflowStaticData('global');\nstate.processed = state.processed || {};   // submission_id → processed at (ms)\nconst now = Date.now();\nconst DAY_MS = 24 * 3600 * 1000;\nfor (const [id, t] of Object.entries(state.processed)) if (now - t > DAY_MS) delete state.processed[id];\n\nconst seenAt = sentId ? state.processed[sentId] : undefined;\nif (sentId && !seenAt) state.processed[sentId] = now;\n\nreturn [{ json: { ...item, duplicate: Boolean(seenAt), seen_seconds_ago: seenAt ? Math.round((now - seenAt) / 1000) : null } }];\n"
       },
-      "notes": "Visitor never waits for the CRM",
+      "notes": "Same submission_id in 24 h?",
       "notesInFlow": true
     },
     {
@@ -206,12 +202,86 @@
       "notesInFlow": true
     },
     {
+      "id": "first-time",
+      "name": "First Time?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1070,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "json-duplicate-true",
+              "leftValue": "={{ !$json.duplicate }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "notes": "Retry / resend → stop here",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-202-accepted",
+      "name": "Respond 202 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1310,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, id: $json.lead.submission_id }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "notes": "Visitor never waits for the CRM",
+      "notesInFlow": true
+    },
+    {
+      "id": "respond-200-duplicate",
+      "name": "Respond 200 Duplicate",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1310,
+        500
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, duplicate: true, id: $json.lead.submission_id }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "notes": "No CRM call, no email",
+      "notesInFlow": true
+    },
+    {
       "id": "hubspot-find-contact",
       "name": "HubSpot · Find Contact",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1110,
+        1590,
         400
       ],
       "parameters": {
@@ -239,7 +309,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1350,
+        1830,
         400
       ],
       "parameters": {
@@ -254,7 +324,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1590,
+        2070,
         400
       ],
       "parameters": {
@@ -290,7 +360,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1830,
+        2310,
         300
       ],
       "parameters": {
@@ -326,7 +396,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1830,
+        2310,
         500
       ],
       "parameters": {
@@ -354,7 +424,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2070,
+        2550,
         400
       ],
       "parameters": {
@@ -382,7 +452,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2350,
+        2830,
         400
       ],
       "parameters": {
@@ -397,7 +467,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2590,
+        3070,
         400
       ],
       "parameters": {
@@ -655,7 +725,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2830,
+        3310,
         400
       ],
       "parameters": {
@@ -670,7 +740,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [
-        3070,
+        3550,
         400
       ],
       "parameters": {
@@ -692,7 +762,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        3350,
+        3830,
         400
       ],
       "parameters": {
@@ -707,7 +777,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        3590,
+        4070,
         400
       ],
       "parameters": {
@@ -895,7 +965,7 @@
       "main": [
         [
           {
-            "node": "Respond 202 Accepted",
+            "node": "Seen Submission?",
             "type": "main",
             "index": 0
           }
@@ -903,6 +973,35 @@
         [
           {
             "node": "Respond 400 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seen Submission?": {
+      "main": [
+        [
+          {
+            "node": "First Time?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Time?": {
+      "main": [
+        [
+          {
+            "node": "Respond 202 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 200 Duplicate",
             "type": "main",
             "index": 0
           }
