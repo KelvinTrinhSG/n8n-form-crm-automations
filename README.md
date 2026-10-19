@@ -4,7 +4,7 @@ Ten n8n workflows built around one everyday business system: website forms and i
 
 Each project solves one problem small B2B teams actually have: duplicate contacts, bot submissions, leads lost when an API fails, leads nobody called back, messy event lists, demo bookings that never reach the pipeline. Each folder has a detailed README covering the problem, the design decisions, the data mapping, the error handling and the limitations.
 
-> **Status, stated plainly:** all 11 workflow files are built and importable, and the JavaScript inside every Code node is covered by **55 unit tests** run with realistic sample payloads (`npm test`). **Projects 01, 03, 04 and 05 have been run live** (HubSpot free account, Google Sheets, Gmail SMTP), with screenshots and a "What the live run caught" section in their READMEs; the other projects have **not yet been run against live HubSpot, Google, Calendly or OpenAI accounts**. Time-saved figures are **estimates** with the assumptions written next to them.
+> **Status, stated plainly:** all 11 workflow files are built and importable, and the JavaScript inside every Code node is covered by **59 unit tests** run with realistic sample payloads (`npm test`). **Projects 01, 03, 04, 05, 06 and 07 have been run live** (HubSpot free account, Google Sheets, Gmail SMTP), with screenshots and a "What the live run caught" section in their READMEs; the other projects have **not yet been run against live HubSpot, Google, Calendly or OpenAI accounts**. Time-saved figures are **estimates** with the assumptions written next to them.
 
 ## The ten projects
 

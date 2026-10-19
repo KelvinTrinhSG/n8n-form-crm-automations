@@ -2,7 +2,23 @@
 
 > A Google Sheet that mirrors HubSpot contacts and refreshes every hour, fetching only what changed since the last run.
 
-**Status:** workflow built and importable; cursor, page flattening and dedupe covered by 3 unit tests. HubSpot pagination settings not yet run against a live account.
+**Status:** **run live on 2026-10-19** against a HubSpot free account and Google Sheets (schedule switched to every minute for single runs, then restored). Three runs: the first synced the 4 existing contacts (no cursor yet → last 30 days); the second fetched **only 1 contact**, the one sitting exactly on the cursor (`GTE` boundary, upserted in place, no duplicate row); after [project 07](../07-bulk-csv-import-dedupe) imported 150 contacts, the third run got `total = 151` and followed HubSpot's paging: **2 pages (100 + 51), 151 distinct IDs, no overlap**, 151 rows upserted, cursor moved to the newest `lastmodifieddate` received. Logic is also covered by 3 unit tests.
+
+| Pagination: 2 pages → 151 rows | Next run: only what changed since the cursor |
+|---|---|
+| ![Execution with two pages](../../docs/screenshots/06-execution-pagination.png) | ![Execution fetching one contact](../../docs/screenshots/06-execution-incremental.png) |
+
+**`CRM Contacts` tab**: one row per HubSpot contact, labels instead of internal values
+
+![CRM Contacts tab](../../docs/screenshots/06-sheet-crm-contacts.png)
+
+**`Sync State` tab**: the cursor, saved only after the write succeeded
+
+![Sync State tab](../../docs/screenshots/06-sheet-sync-state.png)
+
+### What the live run showed
+
+The part I was least sure of was how n8n's HTTP Request pagination injects HubSpot's `after` token into a **JSON body** (most APIs page with a query parameter). It worked as configured: page 2 contained a different set of 51 contacts, none repeated from page 1. The `GTE` boundary also behaves as designed: every run re-reads the contact sitting on the cursor, and the upsert by `hubspot_id` keeps it to one row.
 
 ---
 

@@ -2,7 +2,19 @@
 
 > After a trade show or webinar, upload the lead list once. The workflow maps the columns, rejects bad rows with a reason, merges duplicates, imports in batches without creating duplicate contacts, and emails a report.
 
-**Status:** workflow built and importable; cleaning, batching and reporting covered by 4 unit tests using a deliberately messy sample CSV. Not yet run against a live HubSpot account.
+**Status:** **run live on 2026-10-19** against a HubSpot free account, Google Sheets and Gmail. The uploaded file had 155 lines: 150 test contacts (`expo.leadNNN@example.com`) plus planted problems (two emails repeated, one of them in upper case; an invalid email; a row with no email; a blank line). Result: **150 contacts created** in **2 batches (100 + 50)**, both `COMPLETE`; **2 duplicates merged**, **2 rows rejected** with their row numbers; report emailed to the uploader and both rejects written to `Import Rejects`. Logic is also covered by 4 unit tests.
+
+**Execution**: 155 rows → 2 batches → HubSpot → report email + rejected rows
+
+![Import execution](../../docs/screenshots/07-execution-import.png)
+
+| Report emailed to the uploader | `Import Rejects` tab |
+|---|---|
+| ![Import report email](../../docs/screenshots/07-email-report.png) | ![Import Rejects tab](../../docs/screenshots/07-sheet-import-rejects.png) |
+
+### What the live run showed
+
+Reading the uploaded file with `{{ Object.keys($binary)[0] }}` works with the binary name n8n's Form Trigger actually produces, so the file field can be renamed without breaking the parser. The 150 contacts created here were then used to test [project 06](../06-crm-to-sheets-incremental-sync)'s pagination.
 
 ---
 
