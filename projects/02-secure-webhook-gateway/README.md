@@ -4,6 +4,22 @@
 
 **Status:** ran live on n8n 2.43 (2026-10-19) with 14 signed and unsigned requests, one per branch: 14/14 correct after the fix below. Signature checks and filters are also covered by 6 unit tests (real HMAC computed in the tests). Not yet connected to a real form provider (requests were sent by a test script).
 
+**The live test run**: 14 requests, one per branch, against the running workflow
+
+![Test script output: 14/14 passed](../../docs/screenshots/02-live-test-run.png)
+
+| Signed lead → forwarded to 01 → `202` | Same lead again → `200 duplicate` |
+|---|---|
+| ![Accepted execution](../../docs/screenshots/02-execution-accepted.png) | ![Duplicate execution](../../docs/screenshots/02-execution-duplicate.png) |
+| **Disposable email + "SEO services" → logged, silent `200`** | **6th request from one IP → logged, `429`** |
+| ![Spam execution](../../docs/screenshots/02-execution-spam.png) | ![Rate-limited execution](../../docs/screenshots/02-execution-rate-limited.png) |
+| **Signed with the wrong secret → `401`** | **Same `submission_id` sent straight to 01 → stopped before HubSpot** |
+| ![Rejected execution](../../docs/screenshots/02-execution-rejected.png) | ![01 duplicate guard](../../docs/screenshots/01-execution-duplicate.png) |
+
+**`Spam Log` tab** (blocked requests from several test runs, reviewed weekly for false positives)
+
+![Spam Log tab](../../docs/screenshots/02-sheet-spam-log.png)
+
 ---
 
 ## The business problem
