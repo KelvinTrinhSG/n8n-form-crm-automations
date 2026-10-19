@@ -5,7 +5,7 @@
 const MIN_CONFIDENCE = 0.6;
 const INTENTS = ['sales_inquiry', 'partnership', 'support', 'job_application', 'vendor_pitch', 'spam', 'other'];
 const URGENCY = ['low', 'medium', 'high'];
-const mail = $('Pre-filter Email').item.json;
+const mail = $('Thread Check').item.json;
 
 let ai = {};
 let aiStatus = 'ok';

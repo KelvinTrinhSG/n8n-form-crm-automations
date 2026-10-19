@@ -22,7 +22,7 @@ Rules:
 - urgency high only if they state a deadline within 2 weeks.`;
 
 const user = `From: ${e.sender_name} <${e.sender_email}>
-Subject: ${e.subject}
+Subject: ${e.subject}${e.is_reply ? '\n(This is a reply to an email we sent, e.g. a campaign or a quote. Our original text was removed.)' : ''}
 <email>
 ${e.body_text}
 </email>`;

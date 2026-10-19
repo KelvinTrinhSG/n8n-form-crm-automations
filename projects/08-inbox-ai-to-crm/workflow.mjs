@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  COLOR, codeFrom, note, imapTrigger, ifTrue, openAi, hubspot, sheetsWrite, connections, workflow,
+  COLOR, codeFrom, note, imapTrigger, ifTrue, openAi, hubspot, sheetsRead, sheetsWrite, connections, workflow,
 } from '../../scripts/lib.mjs';
 
 const code = codeFrom(path.dirname(fileURLToPath(import.meta.url)));
@@ -9,7 +9,10 @@ const TRIAGE_FIELDS = ['received_at', 'message_id', 'from', 'subject', 'intent',
 
 const n = {
   imap: note(imapTrigger('New Email in Inbox'), 'IMAP · UNSEEN · marks as read'),
-  pre: note(code('Pre-filter Email', 'prefilter.js', 'each'), 'Skip auto-replies, newsletters, threads'),
+  pre: note(code('Pre-filter Email', 'prefilter.js', 'each'), 'Skip auto-replies, newsletters, bounces'),
+  // Read once per poll, not once per email.
+  handled: note(sheetsRead('Read Email Triage', 'Email Triage', { executeOnce: true }), 'Message-IDs already handled'),
+  thread: note(code('Thread Check', 'thread-check.js'), 'Reply in a handled thread → skip'),
   worth: note(ifTrue('Worth Parsing?', '={{ $json.worth_parsing }}'), 'No AI cost for noise'),
   prompt: note(code('Build AI Prompt', 'build-prompt.js', 'each'), 'Email wrapped as data'),
   ai: note(openAi('OpenAI · Classify & Extract'), 'gpt-4.1-mini · JSON · 3 retries'),
@@ -26,7 +29,7 @@ const n = {
 };
 
 const { c, connect, chain } = connections();
-chain(n.imap, n.pre, n.worth);
+chain(n.imap, n.pre, n.handled, n.thread, n.worth);
 connect(n.worth, n.prompt, 0);
 chain(n.prompt, n.ai, n.parse, n.toCrm);
 connect(n.toCrm, n.upsert, 0);
@@ -48,7 +51,7 @@ Not every lead uses the form. Someone reads the shared inbox, decides what is a 
 
 ### Flow
 1. IMAP trigger on new (unseen) mail
-2. **Rules first**: skip auto-replies, bounces, newsletters, replies, internal mail
+2. **Rules first**: skip auto-replies, bounces, newsletters, internal mail, and replies in a thread already handled (a reply to our campaign is kept: it is often a lead)
 3. **AI** classifies intent + extracts name, company, phone
 4. **Code validates** the AI output
 5. Sales inquiry / partnership, confidence ≥ 0.6 → HubSpot contact + **note**
@@ -65,7 +68,7 @@ Not every lead uses the form. Someone reads the shared inbox, decides what is a 
 - Edit \`OWN_DOMAINS\` in *Pre-filter Email*`,
     stages: [
       { title: '① Receive', color: COLOR.green, body: 'Shared inbox over IMAP.', nodes: [n.imap] },
-      { title: '② Rules filter', color: COLOR.orange, body: 'Free and instant. Drops most noise.', nodes: [n.pre, n.worth] },
+      { title: '② Rules filter', color: COLOR.orange, body: 'Free and instant. Drops most noise.\nHandled threads come from the sheet.', nodes: [n.pre, n.handled, n.thread, n.worth] },
       { title: '③ AI + validation', color: COLOR.purple, body: 'AI suggests. Code decides.', nodes: [n.prompt, n.ai, n.parse, n.toCrm] },
       { title: '④ CRM', color: COLOR.blue, body: 'Contact + note on timeline.\nRed output → review.', nodes: [[n.upsert, n.rowReview], n.noteBody, n.createNote, n.rowCrm, n.log] },
     ],

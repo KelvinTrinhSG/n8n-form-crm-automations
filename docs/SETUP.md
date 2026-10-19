@@ -19,6 +19,7 @@ Only needed for projects that verify webhook signatures (02, 09):
 | `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` | Code nodes may read the secrets below via `$env` |
 | `WEBHOOK_SECRET=...` | Shared secret with your form provider (02) |
 | `CALENDLY_SIGNING_KEY=...` | Signing key of your Calendly webhook subscription (09) |
+| `NODE_EXTRA_CA_CERTS=...pem` | Only if an antivirus inspects TLS (Kaspersky, Avast, ESET): its root certificate, exported as PEM. Otherwise IMAP (08) times out because Node.js does not use the Windows certificate store |
 
 Restart n8n after changing them. If you cannot change env vars (some n8n Cloud plans), move the secret into an n8n credential and verify the signature with the **Crypto** node instead.
 

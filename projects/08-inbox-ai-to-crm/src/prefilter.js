@@ -1,5 +1,7 @@
 // Cheap rules before any AI call: most of a shared inbox is not a new lead.
-// Skipped: our own domain, no-reply senders, auto-replies, bounces, newsletters, replies to existing threads.
+// Skipped: our own domain, no-reply senders, auto-replies, bounces, newsletters.
+// Replies are NOT skipped here: a reply to one of OUR emails (a campaign, a quote) is often a lead.
+// "Thread Check" (next node) skips replies in threads this workflow already handled.
 // Also strips quoted history and signatures so the AI only reads what the sender actually wrote.
 const OWN_DOMAINS = ['example.com'];
 const MAX_BODY = 4000;
@@ -16,8 +18,20 @@ const sender = parseFrom(m.from);
 const senderEmail = sender.address.toLowerCase();
 const domain = senderEmail.split('@')[1] || '';
 const subject = String(m.subject || '').trim();
-const headers = Object.fromEntries(Object.entries(m.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v && v.value !== undefined ? v.value : v)]));
+// The live IMAP trigger returns header values WITH the name in front ("In-Reply-To: <id>",
+// "Precedence: bulk"), and repeated headers as arrays. Normalise to the bare value.
+const headerValue = (k, v) => {
+  const s = Array.isArray(v) ? v.map((x) => headerValue(k, x)).join(', ') : String(v && v.value !== undefined ? v.value : v ?? '');
+  return s.toLowerCase().startsWith(`${k}:`) ? s.slice(k.length + 1).trim() : s.trim();
+};
+const headers = Object.fromEntries(Object.entries(m.headers || {}).map(([k, v]) => [k.toLowerCase(), headerValue(k.toLowerCase(), v)]));
 const header = (k) => headers[k] || '';
+
+// Message-IDs this email answers (In-Reply-To + References), used by "Thread Check".
+const idsIn = (v) => (Array.isArray(v) ? v.join(' ') : String(v || '')).match(/<[^<>\s]+>/g) || [];
+const messageId = idsIn(m.messageId || header('message-id'))[0] || '';
+const refs = [...new Set([...idsIn(m.inReplyTo), ...idsIn(m.references), ...idsIn(header('in-reply-to')), ...idsIn(header('references'))])];
+const isReply = refs.length > 0 || /^(re|aw|sv):/i.test(subject);
 
 let text = String(m.text || m.textPlain || '');
 if (!text && (m.html || m.textHtml)) text = String(m.html || m.textHtml).replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ');
@@ -39,14 +53,15 @@ else if (header('auto-submitted') && header('auto-submitted') !== 'no') skip = '
 else if (header('x-autoreply') || header('x-autorespond') || /^(out of office|automatic reply|auto(matic)?[- ]reply|abwesenheit)/i.test(subject)) skip = 'auto-reply';
 else if (/^(undeliver|delivery status|mail delivery failed)/i.test(subject)) skip = 'bounce';
 else if (header('list-unsubscribe') || /^(bulk|list|junk)$/i.test(header('precedence'))) skip = 'newsletter or bulk mail';
-else if (/^(re|aw|sv|fw|fwd):/i.test(subject) || header('in-reply-to')) skip = 'reply in an existing thread';
 else if (text.length < 15) skip = 'empty body';
 
 return {
   json: {
     worth_parsing: !skip,
     skip_reason: skip,
-    message_id: m.messageId || header('message-id') || '',
+    is_reply: isReply,
+    thread_refs: refs,
+    message_id: messageId,
     received_at: m.date ? new Date(m.date).toISOString() : new Date().toISOString(),
     sender_email: senderEmail,
     sender_name: sender.name,

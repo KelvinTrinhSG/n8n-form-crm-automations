@@ -25,11 +25,10 @@ test('keeps a real inquiry and strips the signature and quoted history', async (
   assert.ok(!out.body_text.includes('617'));
 });
 
-test('skips auto-replies, newsletters, replies, no-reply and internal senders', async () => {
+test('skips auto-replies, newsletters, no-reply and internal senders', async () => {
   const cases = [
     [{ ...inquiry, subject: 'Automatic reply: Quote' }, 'auto-reply'],
     [{ ...inquiry, headers: { 'list-unsubscribe': '<mailto:u@x.com>' } }, 'newsletter or bulk mail'],
-    [{ ...inquiry, subject: 'RE: Quote for 40 seats' }, 'reply in an existing thread'],
     [{ ...inquiry, from: '"HubSpot" <noreply@hubspot.com>' }, 'automated sender'],
     [{ ...inquiry, from: 'Ann <ann@example.com>' }, 'internal sender'],
     [{ ...inquiry, headers: { 'Auto-Submitted': 'auto-replied' } }, 'auto-submitted'],
@@ -37,10 +36,39 @@ test('skips auto-replies, newsletters, replies, no-reply and internal senders', 
   for (const [mail, reason] of cases) assert.equal((await pre(mail)).skip_reason, reason);
 });
 
+// Shape seen in the live run: the IMAP trigger puts the header name in front of the value.
+test('reads live IMAP header values ("Name: value")', async () => {
+  assert.equal((await pre({ ...inquiry, headers: { precedence: 'Precedence: bulk' } })).skip_reason, 'newsletter or bulk mail');
+  assert.equal((await pre({ ...inquiry, headers: { 'auto-submitted': 'Auto-Submitted: no' } })).worth_parsing, true);
+  assert.equal((await pre({ ...inquiry, headers: { 'auto-submitted': 'Auto-Submitted: auto-replied' } })).skip_reason, 'auto-submitted');
+});
+
+test('replies: skipped only in a thread already in Email Triage; a reply to our campaign is parsed', async () => {
+  const followUp = await pre({ ...inquiry, messageId: '<f1@blueharbor.com>', subject: 'Re: Quote for 40 seats', text: 'Just following up on my email above.',
+    headers: { 'in-reply-to': 'In-Reply-To: <abc@blueharbor.com>' } });               // live header shape
+  const campaignReply = await pre({ ...inquiry, messageId: '<r1@blueharbor.com>', subject: 'Re: New: AI listing audits', text: 'Yes, interested. Pricing for 25 users?',
+    inReplyTo: '<campaign-123@example.com>', references: '<campaign-123@example.com>' });
+  const secondReply = await pre({ ...inquiry, messageId: '<r2@blueharbor.com>', subject: 'Re: New: AI listing audits', text: 'Any update on the pricing?',
+    references: ['<campaign-123@example.com>', '<r1@blueharbor.com>'] });
+  assert.deepEqual(followUp.thread_refs, ['<abc@blueharbor.com>']);
+  assert.equal(campaignReply.is_reply, true);
+
+  // Email Triage already holds the first inquiry and the first campaign reply.
+  const triage = [{ message_id: '<abc@blueharbor.com>' }, { message_id: '<r1@blueharbor.com>' }];
+  const out = await runCode(src('thread-check.js'), { items: triage, nodes: { 'Pre-filter Email': [followUp, campaignReply, secondReply] } });
+  assert.equal(out[0].skip_reason, 'reply in a thread we already handled');
+  assert.equal(out[1].worth_parsing, true);                                            // reply to OUR campaign → AI
+  assert.equal(out[2].skip_reason, 'reply in a thread we already handled');
+
+  // Empty sheet (first run): Sheets returns one empty item; nothing is skipped.
+  const fresh = await runCode(src('thread-check.js'), { items: [{}], nodes: { 'Pre-filter Email': [followUp] } });
+  assert.equal(fresh[0].worth_parsing, true);
+});
+
 const parse = async (content, mailOverride = {}) => {
   const mail = { ...(await pre(inquiry)), ...mailOverride };
   const ai = content === null ? { error: { message: 'timeout' } } : { choices: [{ message: { content: typeof content === 'string' ? content : JSON.stringify(content) } }] };
-  return (await runCode(src('parse-ai.js'), { mode: 'each', items: [ai], nodes: { 'Pre-filter Email': [mail] } }))[0];
+  return (await runCode(src('parse-ai.js'), { mode: 'each', items: [ai], nodes: { 'Thread Check': [mail] } }))[0];
 };
 
 test('confident sales inquiry goes to CRM with the header email, not an AI email', async () => {

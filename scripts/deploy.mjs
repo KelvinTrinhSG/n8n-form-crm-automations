@@ -59,9 +59,15 @@ const upsert = async (wf) => {
     console.log(`created  ${created.id}  ${wf.name}`);
     return created;
   }
+  // A node added since the last deploy borrows the credential of an existing node of the same type
+  // (n8n refuses to publish an active workflow with a node missing its credential).
+  const credByType = Object.fromEntries(current.nodes.filter((o) => o.credentials).map((o) => [o.type, o.credentials]));
   for (const n of wf.nodes) {
     const old = current.nodes.find((o) => o.name === n.name);
-    if (!old) continue;
+    if (!old) {
+      if (!n.credentials && credByType[n.type]) n.credentials = credByType[n.type];
+      continue;
+    }
     if (old.credentials) n.credentials = old.credentials;
     if (n.parameters.documentId && !env.SHEET_URL) n.parameters.documentId = old.parameters.documentId;
     if (n.type.endsWith('emailSend')) {
