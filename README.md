@@ -4,7 +4,7 @@ Ten n8n workflows built around one everyday business system: website forms and i
 
 Each project solves one problem small B2B teams actually have: duplicate contacts, bot submissions, leads lost when an API fails, leads nobody called back, messy event lists, demo bookings that never reach the pipeline. Each folder has a detailed README covering the problem, the design decisions, the data mapping, the error handling and the limitations.
 
-> **Status, stated plainly:** all 11 workflow files are built and importable, and the JavaScript inside every Code node is covered by **62 unit tests** run with realistic sample payloads (`npm test`). **Projects 01, 02, 03, 04, 05, 06, 07 and 08 have been run live** (HubSpot free account, Google Sheets, Gmail SMTP), with screenshots and a "What the live run caught" section in their READMEs; the other projects have **not yet been run against live HubSpot, Google, Calendly or OpenAI accounts**. Time-saved figures are **estimates** with the assumptions written next to them.
+> **Status, stated plainly:** all 11 workflow files are built and importable, and the JavaScript inside every Code node is covered by **63 unit tests** run with realistic sample payloads (`npm test`). **Projects 01–08 have been run live** (HubSpot free account, Google Sheets, Gmail SMTP), **09 too with Calendly simulated** (signed webhooks in Calendly's format; webhooks need a paid Calendly plan), with screenshots and a "What the live run caught" section in their READMEs; the other projects have **not yet been run against live accounts**. Time-saved figures are **estimates** with the assumptions written next to them.
 
 ## The ten projects
 
@@ -80,7 +80,7 @@ docs/SETUP.md        credentials, env vars, every Google Sheet tab and its colum
 ## Quick start
 
 ```bash
-npm test                       # 55 tests, no n8n needed
+npm test                       # 63 tests, no n8n needed
 npm run build                  # rebuild workflow JSON after editing src/
 N8N_URL=http://localhost:5678 N8N_API_KEY=xxx node scripts/deploy.mjs
 ```

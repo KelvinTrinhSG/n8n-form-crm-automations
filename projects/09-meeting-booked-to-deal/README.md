@@ -2,7 +2,24 @@
 
 > A booked demo becomes a HubSpot deal automatically. Reschedules keep the same deal, cancellations move it and record the reason, and webhook retries never create a second deal.
 
-**Status:** workflow built and importable; signature verification, event classification, idempotency and reschedule logic covered by 7 unit tests using a realistic Calendly payload. Not yet run against live Calendly or HubSpot accounts.
+**Status:** run end-to-end on 2026-10-20 against **live HubSpot, Google Sheets and SMTP**. The Calendly side was simulated: webhooks in Calendly's payload format, signed locally with the same HMAC scheme (a Calendly webhook subscription needs a paid plan). 8 unit tests.
+
+## What the live run caught
+
+Ten signed requests were sent: 3 with a missing, wrong or expired signature, a new booking, a retry of it, a reschedule (cancel half + create half), a retry of the reschedule and a real cancellation.
+
+| Request | Result |
+|---|---|
+| No / wrong / 10-min-old signature | `401`, reason logged (`no signature header`, `bad signature`, `signature timestamp too old`) |
+| New booking | Contact upserted, deal *Vela Logistics · 30-min Demo* in *Appointment scheduled*, row `Booked`, host email |
+| Same booking again | Stopped at *Check Existing Booking*. One deal |
+| Reschedule | Cancel half ignored. Same deal reused, rows `Rescheduled` + `Moved`, one email |
+| **Reschedule again (retry)** | **Bug:** a second "Rescheduled" email was sent |
+| Real cancellation | Deal → `closedlost` with *Meeting canceled: We picked another vendor*, row `Canceled`, host email |
+
+**The bug.** For a reschedule the sheet is searched by the *old* invitee URI (that is where the deal ID is), so the new row is never in the lookup result and the duplicate check did not fire. A retried reschedule ran the whole branch again: a duplicate email, and if the retry arrived after a cancellation it would have rewritten the `Canceled` row back to `Rescheduled`. **Fix:** once a reschedule is processed the old row is `Moved`, so an old row that is already `Moved` means "seen it" and the flow stops. Re-sent after the fix: stops at *Check Existing Booking*.
+
+The raw-body binary used for the signature check (`rawBody: true` on the Webhook node) works in n8n 2.x.
 
 ---
 
@@ -27,7 +44,7 @@ HubSpot's native Calendly integration exists but only logs meetings; it does not
 | `invitee.created` with `old_invitee` (reschedule) | **Same deal reused**, new row `Rescheduled`, old row `Moved` → one email "moved from X to Y" |
 | `invitee.canceled` with `rescheduled: true` | **Ignored.** This is the cancel half of a reschedule |
 | `invitee.canceled` | Deal → canceled stage with `closed_lost_reason` = Calendly's reason, row `Canceled`, email to the host to follow up |
-| Same `invitee.created` delivered twice | **Stops** after the sheet lookup. No second deal |
+| Same `invitee.created` delivered twice (booking or reschedule) | **Stops** after the sheet lookup. No second deal, no second email |
 
 ## The Calendly gotchas this handles
 

@@ -59,6 +59,16 @@ test('reschedule reuses the old deal and writes two rows, one email', async () =
   assert.match(rows[0].email_subject, /^🔁 Rescheduled/);
 });
 
+test('retry of an already processed reschedule stops the flow', async () => {
+  const body = { event: 'invitee.created', payload: { ...created.payload, uri: 'https://api.calendly.com/scheduled_events/EV2/invitees/INV2', old_invitee: created.payload.uri } };
+  const ev = await parse(signed(body));
+  const out = await runCode(src('check-existing.js'), {
+    items: [{ invitee_uri: created.payload.uri, status: 'Moved', deal_id: '8800', hubspot_contact_id: '501' }],
+    nodes: { 'Verify & Parse Event': [ev] },
+  });
+  assert.deepEqual(out, []);
+});
+
 test('new booking takes ids from the HubSpot responses', async () => {
   const ev = await parse(signed(created));
   const [checked] = await runCode(src('check-existing.js'), { items: [{}], nodes: { 'Verify & Parse Event': [ev] } });
