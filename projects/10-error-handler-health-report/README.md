@@ -2,7 +2,33 @@
 
 > Two small workflows that watch the other nine. **10a** catches every failure, explains it in plain English and emails ops without flooding the inbox. **10b** sends a short traffic-light report every morning, which also proves n8n itself is alive.
 
-**Status:** both workflows built and importable; error classification, alert suppression and the health summary covered by 4 unit tests. Not yet run in production.
+**Status:** both run live on 2026-10-20 (Google Sheets, Gmail SMTP, n8n API). 10a is the Error Workflow of 01–09 and stays active; 10b was run once by switching its cron to every minute, then put back to 08:00. 4 unit tests.
+
+## What the live run showed
+
+**10a, real failures.** A booking with the invitee email `marco.rossi@@vela` was sent to [project 09](../09-meeting-booked-to-deal) three times. HubSpot rejected each upsert (`400 INVALID_EMAIL`), workflow 09 failed in production, and n8n called 10a about 9 s later (the HubSpot node retries 3 times first).
+
+| 09 execution | 10a execution | Category | Email |
+|---|---|---|---|
+| #176 | #177 | `bad_data`, node *HubSpot · Upsert Contact* | **sent** |
+| #178 | #179 | same | not sent (`alert_sent = false`), logged |
+| #180 | #181 | same | not sent, logged |
+
+<!-- WINDOW -->
+
+Suppression keeps its state in workflow static data. In [project 08](../08-inbox-ai-to-crm) static data did *not* survive between executions of an IMAP trigger, so this had to be checked live: for the Error Trigger it does.
+
+| First failure (#177): logged and emailed | Repeat (#179): logged only |
+|---|---|
+| ![First failure](../../docs/screenshots/10a-execution-alert.png) | ![Suppressed](../../docs/screenshots/10a-execution-suppressed.png) |
+
+![Alert email](../../docs/screenshots/10a-email-alert.png)
+
+**10b, one live run (#182).** It read 3 failed executions from the n8n API, grouped them under workflow 09 with a link to the latest, and found 1 `dead` row in `Failed Syncs` (the deliberately bad test row from project 03). Any dead row means 🔴, so the report is red, which is correct.
+
+![Health report run](../../docs/screenshots/10b-execution-report.png)
+
+![Health report email](../../docs/screenshots/10b-email-health.png)
 
 ---
 
