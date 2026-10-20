@@ -64,7 +64,7 @@ return [{
 <p style="background:#fef2f2;padding:10px;border-radius:6px">${esc(message)}</p>
 <p><b>Likely fix:</b> ${esc(rule.hint)}</p>
 ${url ? `<p><a href="${esc(url)}">Open the failed execution</a></p>` : ''}
-${suppressedBefore ? `<p style="color:#666">${suppressedBefore} similar error(s) in the last ${SUPPRESS_MINUTES} min were not emailed (see Error Log).</p>` : ''}
+${suppressedBefore ? `<p style="color:#666">${suppressedBefore} similar error(s) since the previous alert were not emailed (see Error Log).</p>` : ''}
 </div>`,
   },
 }];

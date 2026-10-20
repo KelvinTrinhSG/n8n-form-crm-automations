@@ -14,7 +14,13 @@
 | #178 | #179 | same | not sent (`alert_sent = false`), logged |
 | #180 | #181 | same | not sent, logged |
 
-<!-- WINDOW -->
+A fourth failure was sent **after** the 30-minute window (#185 → 10a #186): emailed again, with the count of the two skipped ones. `Error Log` holds all four, `alert_sent` = TRUE, FALSE, FALSE, TRUE.
+
+![Error Log](../../docs/screenshots/10a-sheet-error-log.png)
+
+![Email after the window](../../docs/screenshots/10a-email-after-window.png)
+
+**Wording fix found in this run:** the email said "2 similar error(s) *in the last 30 min*", but the skipped errors were 29 minutes old and in a longer outage could be older. It now says "*since the previous alert*" (the screenshot shows the old wording).
 
 Suppression keeps its state in workflow static data. In [project 08](../08-inbox-ai-to-crm) static data did *not* survive between executions of an IMAP trigger, so this had to be checked live: for the Error Trigger it does.
 
