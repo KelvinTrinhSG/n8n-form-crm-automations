@@ -19,6 +19,30 @@ Ten signed requests were sent: 3 with a missing, wrong or expired signature, a n
 
 **The bug.** For a reschedule the sheet is searched by the *old* invitee URI (that is where the deal ID is), so the new row is never in the lookup result and the duplicate check did not fire. A retried reschedule ran the whole branch again: a duplicate email, and if the retry arrived after a cancellation it would have rewritten the `Canceled` row back to `Rescheduled`. **Fix:** once a reschedule is processed the old row is `Moved`, so an old row that is already `Moved` means "seen it" and the flow stops. Re-sent after the fix: stops at *Check Existing Booking*.
 
+| Before the fix (#171): the retry runs to *Email Host* | After the fix (#172): stops at *Check Existing Booking* |
+|---|---|
+| ![Retry before fix](../../docs/screenshots/09-execution-retry-bug.png) | ![Retry after fix](../../docs/screenshots/09-execution-retry-fixed.png) |
+
+The host inbox shows the bug: the "Rescheduled" thread holds **2** copies.
+
+![Host inbox](../../docs/screenshots/09-email-host-inbox.png)
+
+New booking (#166): contact upsert → deal → row → email.
+
+![New booking](../../docs/screenshots/09-execution-booked.png)
+
+Real cancellation (#173): deal moved, row updated, host emailed.
+
+![Cancellation](../../docs/screenshots/09-execution-canceled.png)
+
+One deal for the whole booking → reschedule → cancel story, in *Closed Lost* with the reason, linked to the contact:
+
+![HubSpot deal](../../docs/screenshots/09-hubspot-deal.png)
+
+`Meetings` tab: the original booking is `Moved`, the rescheduled one is `Canceled`, both carry the same deal ID:
+
+![Meetings sheet](../../docs/screenshots/09-sheet-meetings.png)
+
 The raw-body binary used for the signature check (`rawBody: true` on the Webhook node) works in n8n 2.x.
 
 ---
